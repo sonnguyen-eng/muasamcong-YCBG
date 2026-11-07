@@ -120,5 +120,5 @@ if __name__ == "__main__":
     print("Đang xử lý nội dung báo cáo qua Gemini...")
     email_body = summarize_and_format_with_gemini(bidding_data, KEYWORDS)
     
-    subject = f"[YÊU CẦU BÁO GIÁ CNTT] Báo cáo ngày {datetime.now().strftime('%d/%m/%Y')}"
+    subject = f"[YÊU CẦU BÁO GIÁ - Nội soi] Báo cáo ngày {datetime.now().strftime('%d/%m/%Y')}"
     send_email(subject, email_body)
