@@ -13,7 +13,7 @@ SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD")
 RECEIVER_EMAIL = SENDER_EMAIL  # Gửi về chính email của bạn
 
 # DANH SÁCH TỪ KHÓA CẦN TÌM KIẾM
-KEYWORDS = ["Nội soi", "Khí phế quản", "ERCP", "Tiêu hóa", "Bàn mổ", "đèn mổ", "Hệ thống khí y tế"]
+KEYWORDS = ["Nội soi", "Khí phế quản", "ERCP", "Tiêu hóa", "Bàn mổ", "đèn mổ", "Hệ thống khí y tế", "thiết bị y tế"]
 
 def fetch_ycbg_data(keyword):
     """
