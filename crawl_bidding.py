@@ -13,7 +13,7 @@ SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD")
 RECEIVER_EMAIL = SENDER_EMAIL  # Gửi về chính email của bạn
 
 # DANH SÁCH TỪ KHÓA CẦN TÌM KIẾM
-KEYWORDS = ["Nội soi", "nội soi tiêu hóa", "nội soi ERCP", "Nội soi khí phế quản", "bàn mổ", "đèn mổ", "máy hấp tiệt trùng"]
+KEYWORDS = ["Nội soi", "Khí phế quản", "ERCP", "Tiêu hóa", "Bàn mổ", "đèn mổ", "Hệ thống khí y tế"]
 
 def fetch_ycbg_data(keyword):
     """
@@ -121,5 +121,5 @@ if __name__ == "__main__":
     print("Đang xử lý nội dung báo cáo qua Gemini...")
     email_body = summarize_and_format_with_gemini(bidding_data, KEYWORDS)
     
-    subject = f"[YÊU CẦU BÁO GIÁ - Nội soi] Báo cáo ngày {datetime.now().strftime('%d/%m/%Y')}"
+    subject = f"[YÊU CẦU BÁO GIÁ -Nội soi] Báo cáo ngày {datetime.now().strftime('%d/%m/%Y')}"
     send_email(subject, email_body)
