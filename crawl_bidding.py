@@ -14,6 +14,7 @@ RECEIVER_EMAIL = SENDER_EMAIL  # Gửi về chính email của bạn
 
 # DANH SÁCH TỪ KHÓA CẦN TÌM KIẾM
 KEYWORDS = ["Nội soi", "nội soi tiêu hóa", "nội soi ERCP", "Nội soi khí phế quản", "bàn mổ", "đèn mổ", "máy hấp tiệt trùng"]
+
 def fetch_ycbg_data(keyword):
     """
     Gọi API Smart Search của muasamcong.mof.gov.vn để lấy thông báo Yêu cầu báo giá / Mời chào giá theo từ khóa
