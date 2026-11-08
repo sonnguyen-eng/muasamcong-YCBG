@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-# ================= 1. CẤU HÌNH TỪ KHÓA & MÔI TRƯỜNG =================
+# ================= 1. CẤU HÌNH BIẾN & TỪ KHÓA =================
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "").strip()
 SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD", "").strip()
 RECEIVER_EMAIL = SENDER_EMAIL
@@ -57,7 +57,7 @@ def fetch_api(search_type, keyword):
                 results.extend(items)
             time.sleep(0.3)
         except Exception as e:
-            print(f"[CẢNH BÁO API] {search_type} '{keyword}' trang {page}: {e}")
+            print(f"[API WARN] {search_type} '{keyword}' p.{page}: {e}")
             break
 
     return results
@@ -67,7 +67,7 @@ def run_crawler():
     unique_items = {}
 
     for kw in KEYWORDS:
-        print(f"-> Đang quét từ khóa: '{kw}'...")
+        print(f"-> Quét từ khóa: '{kw}'...")
         
         # Quét YCBG
         ycbg = fetch_api("YCBG", kw)
@@ -103,14 +103,14 @@ def run_crawler():
 # ================= 3. RENDER EMAIL HTML & GỬI EMAIL =================
 def send_report_email(items):
     if not SENDER_EMAIL or not SENDER_PASSWORD:
-        print("[LỖI KỸ THUẬT] Chưa thiết lập SENDER_EMAIL hoặc SENDER_PASSWORD trong GitHub Secrets!")
+        print("[LỖI] Thiếu SENDER_EMAIL hoặc SENDER_PASSWORD trong GitHub Secrets!")
         return
 
     if not items:
         html_body = f"""
         <div style="font-family: Arial, sans-serif; padding: 20px;">
             <h3 style="color: #d9534f;">BÁO CÁO QUÉT THẦU TỰ ĐỘNG - NGÀY {TODAY_STR}</h3>
-            <p>Hệ thống đã kết nối thành công nhưng không tìm thấy thông báo thầu/YCBG nào mới chứa danh mục từ khóa theo dõi.</p>
+            <p>Hệ thống đã truy vấn thành công tới máy chủ Mua Sắm Công nhưng không tìm thấy thông báo thầu/YCBG nào mới chứa danh mục từ khóa theo dõi.</p>
         </div>
         """
     else:
@@ -158,18 +158,18 @@ def send_report_email(items):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(SENDER_EMAIL, SENDER_PASSWORD)
             server.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, msg.as_string())
-        print(f"[SUCCESS] Đã gửi email báo cáo thành công tới {RECEIVER_EMAIL}!")
+        print(f"[SUCCESS] Đã gửi báo cáo email thành công tới {RECEIVER_EMAIL}!")
     except Exception as e:
-        print(f"[LỖI EMAIL] Không thể gửi email: {e}")
+        print(f"[LỖI EMAIL] Không thể gửi: {e}")
 
 
-# ================= 4. LUỒNG CHÍNH =================
+# ================= 4. CHƯƠNG TRÌNH CHÍNH =================
 if __name__ == "__main__":
-    print(f"=== BẮT ĐẦU QUÉT DỮ LIỆU - NGÀY {TODAY_STR} ===")
+    print(f"=== BẮT ĐẦU CRAWL MUA SẮM CÔNG - NGÀY {TODAY_STR} ===")
     try:
         data = run_crawler()
         print(f"-> Tìm thấy tổng cộng: {len(data)} gói thầu/YCBG.")
         send_report_email(data)
-    except Exception as main_err:
-        print(f"[LỖI NGUYÊN NHÂN CHÍNH]: {main_err}")
-    print("=== HOÀN THÀNH tiến trình ===")
+    except Exception as err:
+        print(f"[LỖI CHÍNH]: {err}")
+    print("=== HOÀN THÀNH ===")
