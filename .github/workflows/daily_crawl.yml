@@ -2,10 +2,8 @@ name: Auto Bidding Search Daily
 
 on:
   schedule:
-    # Lập lịch chạy tự động vào 01:00 UTC (tương đương 08:00 AM giờ Việt Nam - UTC+7) mỗi ngày
-    - cron: '0 1 * * *'
+    - cron: '55 16 * * *' # 16:55 UTC = 23:55 Giờ Việt Nam
   workflow_dispatch: # Cho phép kích hoạt chạy thủ công bất kỳ lúc nào
-
 jobs:
   run-crawler:
     runs-on: ubuntu-latest
