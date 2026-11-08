@@ -12,103 +12,112 @@ from google import genai
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD")
-RECEIVER_EMAIL = SENDER_EMAIL  # Gửi về chính email của bạn
+RECEIVER_EMAIL = SENDER_EMAIL
 
-# DANH SÁCH TỪ KHÓA SẢN PHẨM / THIẾT BỊ / MÃ GÓI CẦN SOI CHI TIẾT
-PRODUCT_KEYWORDS = [
+# DANH SÁCH TỪ KHÓA TÌM KIẾM TRỰC TIẾP
+KEYWORDS = [
     "nội soi", "nội soi tiêu hóa", "nội soi khí phế quản", "Bàn mổ", 
     "đèn mổ", "hệ thống khí y tế", "vận chuyển mẫu", "ERCP"
 ]
 
-# Lấy ngày hiện tại theo Múi giờ Việt Nam (Asia/Ho_Chi_Minh)
 TZ_VN = zoneinfo.ZoneInfo("Asia/Ho_Chi_Minh")
 NOW_VN = datetime.now(TZ_VN)
 
-# Chốt khung thời gian cố định: Từ 00:00:00 đến 23:59:59 của NGÀY HÔM NAY
+# Chốt thời gian trong ngày (Giờ Việt Nam)
 DATE_FROM = NOW_VN.strftime("%Y-%m-%dT00:00:00Z")
 DATE_TO = NOW_VN.strftime("%Y-%m-%dT23:59:59Z")
 TODAY_STR = NOW_VN.strftime("%d/%m/%Y")
 
 
-# ================= 2. TRUY VẤN DỮ LIỆU TỪ MUA SẮM CÔNG =================
-def fetch_ycbg_today():
-    """Lấy danh sách Yêu cầu báo giá (YCBG/RQ) phát hành trong ngày từ 00:00 đến 23:59:59"""
+# ================= 2. THU THẬP DỮ LIỆU CHÍNH XÁC THEO TỪ KHÓA =================
+def fetch_ycbg_by_keywords(keywords):
+    """Tìm Yêu cầu báo giá (YCBG) bằng cách gửi trực tiếp từng từ khóa vào API Mua Sắm Công"""
     url = "https://muasamcong.mof.gov.vn/o/egp-portal-contractor-selection-v2/services/smart/search"
     headers = {
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
     
-    all_items = []
-    # Quét 3 trang đầu (tối đa 150 gói YCBG mới nhất trong ngày)
-    for page in range(3):
-        payload = {
-            "page": page,
-            "size": 50,
-            "type": "YCBG",
-            "keySearch": "",
-            "publishDateFrom": DATE_FROM,
-            "publishDateTo": DATE_TO
-        }
-        try:
-            res = requests.post(url, json=payload, headers=headers, timeout=30)
-            if res.status_code == 200:
-                data = res.json().get("result", {}).get("data", [])
-                if not data:
-                    break
-                all_items.extend(data)
-            time.sleep(0.5)
-        except Exception as e:
-            print(f"[Lỗi API YCBG] Trang {page}: {e}")
-            break
-            
-    return all_items
+    unique_items = {}
 
-def fetch_tbmt_today():
-    """Lấy danh sách Thông báo mời thầu (TBMT) phát hành trong ngày từ 00:00 đến 23:59:59"""
+    for kw in keywords:
+        # Duyệt 3 trang đầu cho mỗi từ khóa để tránh trôi gói thầu
+        for page in range(3):
+            payload = {
+                "page": page,
+                "size": 50,
+                "type": "YCBG",
+                "keySearch": kw,
+                "publishDateFrom": DATE_FROM,
+                "publishDateTo": DATE_TO
+            }
+            try:
+                res = requests.post(url, json=payload, headers=headers, timeout=30)
+                if res.status_code == 200:
+                    data = res.json().get("result", {}).get("data", [])
+                    if not data:
+                        break
+                    for item in data:
+                        # Dùng Mã YCBG (notifyNo hoặc code) để khử trùng lặp
+                        code = item.get("notifyNo") or item.get("code") or item.get("id")
+                        if code and code not in unique_items:
+                            unique_items[code] = item
+                time.sleep(0.3)
+            except Exception as e:
+                print(f"[Lỗi API YCBG] Từ khóa '{kw}', trang {page}: {e}")
+                break
+
+    return list(unique_items.values())
+
+def fetch_tbmt_by_keywords(keywords):
+    """Tìm Thông báo mời thầu (TBMT) bằng cách gửi trực tiếp từng từ khóa vào API Mua Sắm Công"""
     url = "https://muasamcong.mof.gov.vn/o/egp-portal-contractor-selection-v2/services/popular-keyword/get-list"
     headers = {
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
     
-    all_items = []
-    for page in range(3):
-        payload = {
-            "page": page,
-            "size": 50,
-            "type": "TBMT",
-            "keySearch": "",
-            "publishDateFrom": DATE_FROM,
-            "publishDateTo": DATE_TO
-        }
-        try:
-            res = requests.post(url, json=payload, headers=headers, timeout=30)
-            if res.status_code == 200:
-                data = res.json().get("result", {}).get("data", [])
-                if not data:
-                    break
-                all_items.extend(data)
-            time.sleep(0.5)
-        except Exception as e:
-            print(f"[Lỗi API TBMT] Trang {page}: {e}")
-            break
-            
-    return all_items
+    unique_items = {}
+
+    for kw in keywords:
+        for page in range(3):
+            payload = {
+                "page": page,
+                "size": 50,
+                "type": "TBMT",
+                "keySearch": kw,
+                "publishDateFrom": DATE_FROM,
+                "publishDateTo": DATE_TO
+            }
+            try:
+                res = requests.post(url, json=payload, headers=headers, timeout=30)
+                if res.status_code == 200:
+                    data = res.json().get("result", {}).get("data", [])
+                    if not data:
+                        break
+                    for item in data:
+                        code = item.get("bidNo") or item.get("notifyNo") or item.get("id")
+                        if code and code not in unique_items:
+                            unique_items[code] = item
+                time.sleep(0.3)
+            except Exception as e:
+                print(f"[Lỗi API TBMT] Từ khóa '{kw}', trang {page}: {e}")
+                break
+
+    return list(unique_items.values())
 
 
-# ================= 3. SOI DANH MỤC HÀNG HÓA & PHÂN TÍCH GEMINI =================
+# ================= 3. PHÂN TÍCH & ĐỊNH DẠNG VỚI GEMINI =================
 def analyze_data_with_gemini(ycbg_data, tbmt_data, keywords):
-    """Gửi toàn bộ dữ liệu gói thầu/chào giá trong ngày để Gemini phân tích chi tiết"""
     total_count = len(ycbg_data) + len(tbmt_data)
     if total_count == 0:
-        return f"<p>Hệ thống đã quét từ 00:00 đến 23:59:59 ngày {TODAY_STR} và không ghi nhận Thông báo mời thầu hoặc Yêu cầu báo giá mới nào được đăng tải trên Mua Sắm Công.</p>"
+        return f"<p>Hệ thống đã quét từ 00:00 đến 23:59:59 ngày {TODAY_STR} và không ghi nhận Thông báo mời thầu hoặc Yêu cầu báo giá mới nào chứa từ khóa {keywords}.</p>"
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     
     prompt = f"""
-    Bạn là một Trợ lý CNTT & Chuyên gia phân tích dữ liệu Đấu thầu.
-    Dưới đây là toàn bộ dữ liệu Thông báo mời thầu (TBMT) và Yêu cầu báo giá (YCBG/RQ) đăng tải trong ngày {TODAY_STR} (từ 00:00:00 đến 23:59:59) trên muasamcong.mof.gov.vn:
+    Bạn là một Trợ lý CNTT & Chuyên gia Phân tích Đấu thầu.
+    Dưới đây là dữ liệu Thông báo mời thầu (TBMT) và Yêu cầu báo giá (YCBG) thu thập được từ muasamcong.mof.gov.vn ngày {TODAY_STR}:
 
     === DANH SÁCH YÊU CẦU BÁO GIÁ (YCBG) ===
     {ycbg_data}
@@ -116,23 +125,17 @@ def analyze_data_with_gemini(ycbg_data, tbmt_data, keywords):
     === DANH SÁCH THÔNG BÁO MỜI THẦU (TBMT) ===
     {tbmt_data}
 
-    NHIỆM VỤ CỦA BẠN:
-    1. Soi kỹ Tiêu đề, Mã gói và DANH MỤC HÀNG HÓA/CHI TIẾT MẶT HÀNG bên trong từng thông báo.
-    2. Lọc ra các gói thầu/yêu cầu báo giá có chứa bất kỳ sản phẩm/vật tư nào thuộc danh mục từ khóa: {keywords}.
-       *LƯU Ý quan trọng:* Kể cả khi tiêu đề viết chung chung (ví dụ: 'Mua sắm trang thiết bị năm 2026'), nhưng trong danh mục sản phẩm chi tiết có chứa các thiết bị/vật tư quan tâm thì VẪN LỌC RA.
-    
-    3. Định dạng kết quả thành BẢNG HTML chuyên nghiệp gửi Email bao gồm các cột:
-       - Phân loại (TBMT hoặc YCBG)
-       - Mã số (Mã TBMT hoặc Mã RQ)
+    NHIỆM VỤ:
+    1. Trình bày toàn bộ danh sách gói thầu/YCBG trên thành BẢNG HTML đẹp mắt để gửi Email.
+    2. Các cột trong bảng gồm:
+       - Loại (YCBG hoặc TBMT)
+       - Mã YCBG / Mã TBMT (Ví dụ: RQ2600095386-00, RQ2600095388-00)
        - Tên gói thầu / Yêu cầu báo giá
-       - Mặt hàng/Sản phẩm phát hiện (Nêu rõ tên sản phẩm khớp từ khóa nằm trong danh mục)
-       - Bên mời thầu / Đơn vị yêu cầu
-       - Hạn nộp / Đóng thầu
-       - Link trực tiếp: 
-         + Nếu là YCBG: `<a href="https://muasamcong.mof.gov.vn/web/guest/contractor-selection?type=es-ycbg&stepCode=request-quote-step-1&notifyNo=[MÃ_SỐ]">Xem chi tiết</a>`
-         + Nếu là TBMT: `<a href="https://muasamcong.mof.gov.vn/vi/web/guest/initiator?tbmtNo=[MÃ_SỐ]">Xem chi tiết</a>`
-
-    4. Nếu không có gói nào chứa mặt hàng phù hợp, trả về thông báo: "Hệ thống đã quét {total_count} thông báo trong ngày {TODAY_STR}, nhưng không có gói thầu/chào giá nào chứa sản phẩm thuộc danh mục theo dõi."
+       - Chủ đầu tư / Bên mời chào giá
+       - Ngày đăng tải
+       - Link xem chi tiết trực tiếp:
+         + Đối với YCBG: `<a href="https://muasamcong.mof.gov.vn/web/guest/contractor-selection?type=es-ycbg&stepCode=request-quote-step-1&notifyNo=[MÃ_RQ]">Xem chi tiết</a>`
+         + Đối với TBMT: `<a href="https://muasamcong.mof.gov.vn/vi/web/guest/initiator?tbmtNo=[MÃ_TBMT]">Xem chi tiết</a>`
     """
 
     response = client.models.generate_content(
@@ -154,31 +157,26 @@ def send_email(subject, html_content):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(SENDER_EMAIL, SENDER_PASSWORD)
             server.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, msg.as_string())
-        print(f"[{TODAY_STR}] -> Đã gửi thành công email báo cáo thầu daily!")
+        print(f"[{TODAY_STR}] -> Đã gửi email báo cáo thành công!")
     except Exception as e:
         print(f"[Lỗi gửi email] {e}")
 
 
-# ================= 5. LUỒNG CHẠY CHÍNH (MAIN) =================
+# ================= 5. LUỒNG CHẠY CHÍNH =================
 if __name__ == "__main__":
-    print(f"=== BẮT ĐẦU QUÉT DỮ LIỆU MUA SẮM CÔNG NGÀY {TODAY_STR} (00:00:00 - 23:59:59) ===")
+    print(f"=== QUÉT THẦU TỰ ĐỘNG NGHỆ AN - NGÀY {TODAY_STR} ===")
     
-    # 1. Thu thập dữ liệu YCBG
-    print("-> Đang lấy dữ liệu Yêu cầu báo giá (YCBG/RQ)...")
-    ycbg_items = fetch_ycbg_today()
-    print(f"   + Đã lấy được {len(ycbg_items)} YCBG trong ngày.")
+    print("-> Đang quét Yêu cầu báo giá (YCBG)...")
+    ycbg_items = fetch_ycbg_by_keywords(KEYWORDS)
+    print(f"   + Tìm thấy {len(ycbg_items)} YCBG phù hợp.")
     
-    # 2. Thu thập dữ liệu TBMT
-    print("-> Đang lấy dữ liệu Thông báo mời thầu (TBMT)...")
-    tbmt_items = fetch_tbmt_today()
-    print(f"   + Đã lấy được {len(tbmt_items)} TBMT trong ngày.")
+    print("-> Đang quét Thông báo mời thầu (TBMT)...")
+    tbmt_items = fetch_tbmt_by_keywords(KEYWORDS)
+    print(f"   + Tìm thấy {len(tbmt_items)} TBMT phù hợp.")
     
-    # 3. Phân tích qua Gemini
-    print("-> Đang chuyển toàn bộ dữ liệu ngày cho Gemini phân tích & bóc tách danh mục...")
-    email_body = analyze_data_with_gemini(ycbg_items, tbmt_items, PRODUCT_KEYWORDS)
+    print("-> Đang tổng hợp báo cáo bằng Gemini...")
+    email_body = analyze_data_with_gemini(ycbg_items, tbmt_items, KEYWORDS)
     
-    # 4. Gửi email báo cáo
-    subject = f"[BÁO CÁO THẦU DAILY] Ngày {TODAY_STR} (00:00 - 23:59)"
+    subject = f"[TBMT & YCBG DAILY] Báo cáo ngày {TODAY_STR}"
     send_email(subject, email_body)
-    
-    print("=== HOÀN THÀNH QUY TRÌNH HÀNG NGÀY ===")
+    print("=== HOÀN THÀNH ===")
