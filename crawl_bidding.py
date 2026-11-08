@@ -1,92 +1,81 @@
 import os
+import time
 import smtplib
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
+import zoneinfo
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from google import genai
 
-# Nạp thông tin bảo mật từ cấu hình GitHub Environment
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD")
-RECEIVER_EMAIL = SENDER_EMAIL  # Gửi về chính email của bạn
+RECEIVER_EMAIL = SENDER_EMAIL
 
-# DANH SÁCH TỪ KHÓA CẦN TÌM KIẾM
-KEYWORDS = ["Nội soi", "Khí phế quản", "ERCP", "Tiêu hóa", "Bàn mổ", "đèn mổ", "Hệ thống khí y tế", "thiết bị y tế"]
+# Danh sách TỪ KHÓA SẢN PHẨM / THIẾT BỊ cần tìm trong DANH MỤC CHI TIẾT
+# (Cấu hình các sản phẩm bạn quan tâm ở đây, ví dụ: ống soi, camera, phần mềm, máy tính...)
+PRODUCT_KEYWORDS = [
+    "nội soi", "nội soi tiêu hóa", "nội soi khí phế quản", "Bàn mổ", 
+    "đèn mổ", "hệ thống khí y tế", "vận chuyển mẫu", "ERCP"
+]
 
-def fetch_ycbg_data(keyword):
-    """
-    Gọi API Smart Search của muasamcong.mof.gov.vn để lấy thông báo Yêu cầu báo giá / Mời chào giá theo từ khóa
-    """
+def fetch_all_ycbg_today():
+    """Lấy danh sách tất cả YCBG phát hành trong ngày (Không lọc tiêu đề để tránh bỏ sót)"""
     url = "https://muasamcong.mof.gov.vn/o/egp-portal-contractor-selection-v2/services/smart/search"
     headers = {
         "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
     
-    # Lấy dữ liệu trong ngày hôm nay
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    tz_vn = zoneinfo.ZoneInfo("Asia/Ho_Chi_Minh")
+    today_vn = datetime.now(tz_vn)
+    today_str = today_vn.strftime("%Y-%m-%d")
     
     payload = {
         "page": 0,
-        "size": 50,
-        "type": "YCBG",  # Loại thông tin: YCBG (Yêu cầu báo giá / Mời chào giá). Bạn có thể đổi thành "TBMT" nếu muốn tìm Thông báo mời thầu.
-        "keySearch": keyword,
+        "size": 150,  # Lấy diện rộng tối đa 150 gói/ngày
+        "type": "YCBG",
+        "keySearch": "", # Để trống từ khóa để lấy tất cả gói trong ngày
         "publishDateFrom": f"{today_str}T00:00:00Z",
         "publishDateTo": f"{today_str}T23:59:59Z"
     }
 
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        response = requests.post(url, json=payload, headers=headers, timeout=60)
         if response.status_code == 200:
-            res_json = response.json()
-            # Trả về danh sách kết quả từ cấu trúc response mới
-            return res_json.get("result", {}).get("data", [])
-        else:
-            print(f"Lỗi API HTTP {response.status_code} khi tìm từ khóa: {keyword}")
-            return []
+            return response.json().get("result", {}).get("data", [])
+        return []
     except Exception as e:
-        print(f"Lỗi khi gửi yêu cầu tới Mua Sắm Công với từ khóa '{keyword}': {e}")
+        print(f"[Lỗi YCBG] Không thể kết nối API: {e}")
         return []
 
-def collect_all_biddings(keywords):
-    """Gửi request tìm kiếm lần lượt từng từ khóa và gộp dữ liệu (loại bỏ trùng lặp)"""
-    all_items = {}
-    
-    for kw in keywords:
-        print(f"Đang tìm kiếm thông báo với từ khóa: '{kw}'...")
-        items = fetch_ycbg_data(kw)
-        for item in items:
-            # Dùng ID hoặc mã thông báo làm Key để loại bỏ các gói thầu bị trùng giữa các từ khóa
-            item_id = item.get("id") or item.get("notifyNo") or item.get("code")
-            if item_id and item_id not in all_items:
-                all_items[item_id] = item
-
-    return list(all_items.values())
-
-def summarize_and_format_with_gemini(data, keywords):
-    """Sử dụng SDK google-genai để tổng hợp và tạo giao diện HTML gửi Email"""
-    if not data:
-        return "<p>Hôm nay không có Thông báo mời chào giá / Yêu cầu báo giá mới nào phù hợp với các từ khóa theo dõi.</p>"
+def deep_analyze_with_gemini(raw_data, product_keywords):
+    """Gửi toàn bộ danh mục dữ liệu chi tiết cho Gemini để 'soi' từng mặt hàng sản phẩm"""
+    if not raw_data:
+        return "<p>Hôm nay không có Yêu cầu báo giá mới nào được đăng tải.</p>"
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     
     prompt = f"""
-    Bạn là một Trợ lý CNTT chuyên nghiệp. Dưới đây là danh sách các Thông báo yêu cầu báo giá / Mời chào giá vừa thu thập được từ muasamcong.mof.gov.vn theo các từ khóa {keywords}:
-    {data}
+    Bạn là một Trợ lý CNTT & Chuyên gia phân tích dữ liệu mua sắm công.
+    Dưới đây là danh sách dữ liệu Yêu cầu báo giá (YCBG) thô thu thập trong ngày từ muasamcong.mof.gov.vn:
+    {raw_data}
 
-    Nhiệm vụ của bạn:
-    1. Trình bày nội dung trên thành một báo cáo dạng BẢNG HTML đẹp mắt, chuyên nghiệp để gửi qua Email.
-    2. Các cột thông tin trong bảng cần bao gồm:
-       - Mã TBMT / Mã YCBG
-       - Tên gói thầu / Nội dung yêu cầu báo giá
-       - Bên mời chào giá / Đơn vị yêu cầu
-       - Giá dự toán / Giá gói thầu (nếu có, nếu không ghi 'Chưa cập nhật')
-       - Thời điểm đóng thầu / Hạn nộp báo giá
-       - Link xem chi tiết: Tạo đường dẫn trực tiếp dạng `<a href="https://muasamcong.mof.gov.vn/vi/web/guest/initiator?tbmtNo=[MÃ_SỐ]">Xem chi tiết</a>` (thay [MÃ_SỐ] bằng Mã số thông báo tương ứng).
-    3. Thêm một lời chào ngắn ở đầu email và lời chúc làm việc hiệu quả ở cuối email.
+    NHIỆM VỤ CỦA BẠN:
+    1. Đọc và phân tích CHI TIẾT từng gói/thông báo (bao gồm danh mục hàng hóa, danh sách vật tư, mô tả chi tiết nếu có trong dữ liệu thô).
+    2. Lọc ra tất cả các gói YCBG có chứa các sản phẩm/thiết bị thuộc danh sách từ khóa sau: {product_keywords}. 
+       *LƯU Ý QUAN TRỌNG:* Kiểm tra sâu vào danh mục mặt hàng chi tiết. Ngay cả khi Tiêu đề gói không chứa từ khóa, nhưng bên trong DANH MỤC HÀNG HÓA/VẬT TƯ có chứa sản phẩm phù hợp thì VẪN PHẢI LỌC RA.
+    
+    3. Trình bày kết quả dưới dạng BẢNG HTML chuyên nghiệp gửi Email:
+       - Mã YCBG / Mã số
+       - Tên Yêu cầu báo giá (Tiêu đề)
+       - Sản phẩm/Thiết bị phát hiện (Chỉ rõ tìm thấy sản phẩm nào trong danh mục chi tiết)
+       - Đơn vị yêu cầu báo giá
+       - Hạn nộp báo giá
+       - Link xem chi tiết: Tạo đường dẫn dạng `<a href="https://muasamcong.mof.gov.vn/vi/web/guest/initiator?tbmtNo=[MÃ_SỐ]">Xem chi tiết</a>`
+
+    4. Nếu sau khi soi toàn bộ danh mục chi tiết mà KHÔNG có sản phẩm nào phù hợp, hãy trả về thông báo: "Hôm nay không có Yêu cầu báo giá nào chứa sản phẩm/thiết bị thuộc danh mục theo dõi."
     """
 
     response = client.models.generate_content(
@@ -96,7 +85,6 @@ def summarize_and_format_with_gemini(data, keywords):
     return response.text
 
 def send_email(subject, html_content):
-    """Gửi email thông qua SMTP Gmail"""
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = SENDER_EMAIL
@@ -109,17 +97,20 @@ def send_email(subject, html_content):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(SENDER_EMAIL, SENDER_PASSWORD)
             server.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, msg.as_string())
-        print("Đã gửi email báo cáo thành công!")
+        print("-> Đã gửi Email báo cáo YCBG chi tiết thành công!")
     except Exception as e:
-        print(f"Lỗi khi gửi email: {e}")
+        print(f"[Lỗi gửi Email] {e}")
 
 if __name__ == "__main__":
-    print("Bắt đầu tiến trình quét Yêu cầu báo giá...")
-    bidding_data = collect_all_biddings(KEYWORDS)
-    print(f"Tổng số thông báo tìm thấy (không trùng lặp): {len(bidding_data)}")
+    print("=== BẮT ĐẦU SOÁT CHI TIẾT DANH MỤC YÊU CẦU BÁO GIÁ (YCBG) ===")
+    raw_ycbg = fetch_all_ycbg_today()
+    print(f"-> Đã thu thập {len(raw_ycbg)} gói YCBG trong ngày. Đang chuyển cho Gemini phân tích danh mục...")
     
-    print("Đang xử lý nội dung báo cáo qua Gemini...")
-    email_body = summarize_and_format_with_gemini(bidding_data, KEYWORDS)
+    email_body = deep_analyze_with_gemini(raw_ycbg, PRODUCT_KEYWORDS)
     
-    subject = f"[YÊU CẦU BÁO GIÁ -Nội soi] Báo cáo ngày {datetime.now().strftime('%d/%m/%Y')}"
+    tz_vn = zoneinfo.ZoneInfo("Asia/Ho_Chi_Minh")
+    today_str = datetime.now(tz_vn).strftime('%d/%m/%Y')
+    subject = f"[YCBG CHI TIẾT] Báo cáo sản phẩm danh mục ngày {today_str}"
+    
     send_email(subject, email_body)
+    print("=== HOÀN THÀNH ===")
