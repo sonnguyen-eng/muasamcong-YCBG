@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-# ================= 1. CẤU HÌNH TỪ KHÓA & MÔI TRƯỜNG =================
+# ================= 1. CẤU HÌNH BIẾN MÔI TRƯỜNG & TỪ KHÓA =================
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "")
 SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD", "")
@@ -17,13 +17,13 @@ KEYWORDS = [
     "Bàn mổ", "đèn mổ", "hệ thống khí y tế", "vận chuyển mẫu", "ERCP"
 ]
 
-# Chuẩn hóa giờ Việt Nam (UTC+7) không phụ thuộc thư viện bên ngoài
+# Chuẩn hóa giờ Việt Nam (UTC+7)
 TZ_VN = timezone(timedelta(hours=7))
 NOW_VN = datetime.now(TZ_VN)
 TODAY_STR = NOW_VN.strftime("%d/%m/%Y")
 
 
-# ================= 2. HÀM QUÉT API MUA SẮM CÔNG =================
+# ================= 2. QUÉT TRỰC TIẾP API MUA SẮM CÔNG V2 =================
 def fetch_bidding_api(search_type, keyword):
     if search_type == "YCBG":
         url = "https://muasamcong.mof.gov.vn/o/egp-portal-contractor-selection-v2/services/smart/search"
@@ -70,7 +70,7 @@ def run_crawler():
     unique_matches = {}
 
     for kw in KEYWORDS:
-        print(f"--> Đang gửi Request tìm từ khóa: '{kw}'...")
+        print(f"--> Đang truy vấn từ khóa: '{kw}'...")
         
         # 1. Quét YCBG
         ycbg_list = fetch_bidding_api("YCBG", kw)
@@ -105,13 +105,13 @@ def run_crawler():
     return list(unique_matches.values())
 
 
-# ================= 4. TẠO HTML BÁO CÁO VÀ GỬI EMAIL =================
+# ================= 4. ĐỊNH DẠNG BÁO CÁO HTML BẢO VỆ =================
 def generate_html_report(matched_items):
     if not matched_items:
         return f"""
         <div style="font-family: Arial, sans-serif; padding: 20px;">
             <h3 style="color: #d9534f;">BÁO CÁO QUÉT THẦU TỰ ĐỘNG - NGÀY {TODAY_STR}</h3>
-            <p>Hệ thống đã truy vấn thành công tới máy chủ Mua Sắm Công nhưng không tìm thấy thông báo thầu/YCBG nào mới chứa danh mục từ khóa theo dõi.</p>
+            <p>Hệ thống đã truy vấn thành công tới máy chủ Mua Sắm Công nhưng không tìm thấy thông báo thầu/YCBG nào mới chứa các từ khóa theo dõi.</p>
         </div>
         """
 
@@ -121,13 +121,13 @@ def generate_html_report(matched_items):
         <p>Phát hiện <b>{len(matched_items)}</b> thông báo phù hợp danh mục từ khóa theo dõi:</p>
         <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%;">
             <tr style="background-color: #f2f2f2;">
-                <th>STT</th>
-                <th>Phân loại</th>
+                <th align="center">STT</th>
+                <th align="center">Phân loại</th>
                 <th>Mã gói</th>
                 <th>Tên gói thầu / YCBG</th>
                 <th>Bên mời chào giá</th>
-                <th>Từ khóa khớp</th>
-                <th>Chi tiết</th>
+                <th align="center">Từ khóa khớp</th>
+                <th align="center">Chi tiết</th>
             </tr>
     """
     for idx, item in enumerate(matched_items, 1):
@@ -152,26 +152,28 @@ def generate_html_report(matched_items):
 
 
 def generate_email_body(matched_items):
-    # Ưu tiên thử dùng Gemini SDK, nếu lỗi tự chuyển sang HTML thuần
+    # Thử gọi Gemini AI để định dạng báo cáo. Nếu xảy ra lỗi SDK/API key, tự động rơi vào bộ tạo HTML an toàn
     if GEMINI_API_KEY:
         try:
             from google import genai
             client = genai.Client(api_key=GEMINI_API_KEY)
-            prompt = f"Tạo bảng HTML đẹp báo cáo danh sách gói thầu sau ngày {TODAY_STR}: {matched_items}"
+            prompt = f"Hãy tạo bảng báo cáo HTML đẹp mắt danh sách các gói thầu ngày {TODAY_STR}: {matched_items}"
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=prompt
             )
-            return response.text
+            if response and response.text:
+                return response.text
         except Exception as e:
-            print(f"[CẢNH BÁO GEMINI] {e}, chuyển sang HTML mặc định.")
+            print(f"[CẢNH BÁO AI] Không thể định dạng qua Gemini ({e}). Chuyển sang mẫu HTML chuẩn.")
     
     return generate_html_report(matched_items)
 
 
+# ================= 5. GỬI EMAIL THÔNG BÁO =================
 def send_email(subject, html_content):
     if not SENDER_EMAIL or not SENDER_PASSWORD:
-        print("[LỖI] Thiếu SENDER_EMAIL hoặc SENDER_PASSWORD!")
+        print("[LỖI] Thiếu SENDER_EMAIL hoặc SENDER_PASSWORD trong GitHub Secrets!")
         return
 
     msg = MIMEMultipart("alternative")
@@ -184,12 +186,12 @@ def send_email(subject, html_content):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(SENDER_EMAIL, SENDER_PASSWORD)
             server.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, msg.as_string())
-        print(f"[EMAIL] Đã gửi báo cáo thành công tới {RECEIVER_EMAIL}!")
+        print(f"[SUCCESS] Đã gửi báo cáo email thành công tới {RECEIVER_EMAIL}!")
     except Exception as e:
-        print(f"[LỖI EMAIL] Không thể gửi: {e}")
+        print(f"[LỖI EMAIL] {e}")
 
 
-# ================= 5. CHƯƠNG TRÌNH CHÍNH =================
+# ================= 6. CHƯƠNG TRÌNH CHÍNH =================
 if __name__ == "__main__":
     print(f"==================================================")
     print(f"   BẮT ĐẦU CRAWL DỮ LIỆU THẦU DAILY - {TODAY_STR}")
