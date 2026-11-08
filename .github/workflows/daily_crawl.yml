@@ -2,26 +2,30 @@ name: Auto Bidding Search Daily
 
 on:
   schedule:
-    - cron: '55 16 * * *' # 16:55 UTC = 23:55 Giờ Việt Nam
-  workflow_dispatch: # Cho phép kích hoạt chạy thủ công bất kỳ lúc nào
+    - cron: '55 16 * * *' # 23:55 PM giờ Việt Nam (16:55 UTC)
+  workflow_dispatch:
+
 jobs:
   run-crawler:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Thiết lập môi trường Python
+      - name: Thiết lập Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Cài đặt các thư viện cần thiết
-        run: pip install requests google-genai
+      - name: Cài đặt thư viện & Trình duyệt Playwright
+        run: |
+          pip install requests google-genai playwright
+          playwright install chromium
+          playwright install-deps
 
       - name: Thực thi Script quét thầu
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
           SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
-        run: python crawl_bidding.py
+        run: python crawl_bidding_daily.py
