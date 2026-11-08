@@ -2,13 +2,11 @@ import os
 import time
 import smtplib
 import requests
-from datetime import datetime
-import zoneinfo
+from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from google import genai
 
-# ================= 1. CẤU HÌNH HỆ THỐNG & TỪ KHÓA =================
+# ================= 1. CẤU HÌNH TỪ KHÓA & MÔI TRƯỜNG =================
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "")
 SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD", "")
@@ -19,16 +17,14 @@ KEYWORDS = [
     "Bàn mổ", "đèn mổ", "hệ thống khí y tế", "vận chuyển mẫu", "ERCP"
 ]
 
-TZ_VN = zoneinfo.ZoneInfo("Asia/Ho_Chi_Minh")
+# Chuẩn hóa giờ Việt Nam (UTC+7) không phụ thuộc thư viện bên ngoài
+TZ_VN = timezone(timedelta(hours=7))
 NOW_VN = datetime.now(TZ_VN)
 TODAY_STR = NOW_VN.strftime("%d/%m/%Y")
 
 
-# ================= 2. QUÉT TRỰC TIẾP API MUA SẮM CÔNG V2 =================
+# ================= 2. HÀM QUÉT API MUA SẮM CÔNG =================
 def fetch_bidding_api(search_type, keyword):
-    """
-    Gửi Request chuẩn UTF-8 tới Cổng Mua Sắm Công
-    """
     if search_type == "YCBG":
         url = "https://muasamcong.mof.gov.vn/o/egp-portal-contractor-selection-v2/services/smart/search"
     else:
@@ -49,7 +45,7 @@ def fetch_bidding_api(search_type, keyword):
             "keySearch": str(keyword).strip()
         }
         try:
-            res = requests.post(url, json=payload, headers=headers, timeout=30)
+            res = requests.post(url, json=payload, headers=headers, timeout=25)
             if res.status_code == 200:
                 res_json = res.json()
                 items = []
@@ -63,18 +59,18 @@ def fetch_bidding_api(search_type, keyword):
                 all_items.extend(items)
             time.sleep(0.3)
         except Exception as e:
-            print(f"[CẢNH BÁO API] {search_type} | Từ khóa '{keyword}' | Trang {page}: {e}")
+            print(f"[CẢNH BÁO API] {search_type} | '{keyword}' | Page {page}: {e}")
             break
 
     return all_items
 
 
-# ================= 3. THU THẬP & ĐỐI SOÁT TỪ KHÓA =================
+# ================= 3. THU THẬP & ĐỐI SOÁT DỮ LIỆU =================
 def run_crawler():
     unique_matches = {}
 
     for kw in KEYWORDS:
-        print(f"--> Đang gửi Request API tìm từ khóa: '{kw}'...")
+        print(f"--> Đang gửi Request tìm từ khóa: '{kw}'...")
         
         # 1. Quét YCBG
         ycbg_list = fetch_bidding_api("YCBG", kw)
@@ -87,8 +83,7 @@ def run_crawler():
                     "code": code,
                     "title": item.get("bidName") or item.get("name") or item.get("title") or "",
                     "investor": item.get("procuringEntityName") or item.get("investorName") or "",
-                    "matched_kw": kw,
-                    "raw": item
+                    "matched_kw": kw
                 }
 
         # 2. Quét TBMT
@@ -102,8 +97,7 @@ def run_crawler():
                     "code": code,
                     "title": item.get("bidName") or item.get("name") or item.get("title") or "",
                     "investor": item.get("procuringEntityName") or item.get("investorName") or "",
-                    "matched_kw": kw,
-                    "raw": item
+                    "matched_kw": kw
                 }
                 
         time.sleep(0.3)
@@ -111,20 +105,19 @@ def run_crawler():
     return list(unique_matches.values())
 
 
-# ================= 4. ĐỊNH DẠNG EMAIL NỘI DUNG (CÓ FALLBACK THỦ CÔNG) =================
-def build_fallback_html(matched_items):
-    """Tạo bảng HTML trực tiếp bằng Python nếu Gemini không phản hồi"""
+# ================= 4. TẠO HTML BÁO CÁO VÀ GỬI EMAIL =================
+def generate_html_report(matched_items):
     if not matched_items:
         return f"""
         <div style="font-family: Arial, sans-serif; padding: 20px;">
             <h3 style="color: #d9534f;">BÁO CÁO QUÉT THẦU TỰ ĐỘNG - NGÀY {TODAY_STR}</h3>
-            <p>Hệ thống đã truy vấn thành công tới máy chủ Mua Sắm Công nhưng không tìm thấy thông báo thầu/YCBG nào chứa danh mục từ khóa theo dõi.</p>
+            <p>Hệ thống đã truy vấn thành công tới máy chủ Mua Sắm Công nhưng không tìm thấy thông báo thầu/YCBG nào mới chứa danh mục từ khóa theo dõi.</p>
         </div>
         """
 
     html = f"""
     <div style="font-family: Arial, sans-serif; padding: 20px;">
-        <h2 style="color: #0275d8;">BÁO CÁO GÓI THẦU & YCBG NGÀY {TODAY_STR}</h2>
+        <h2 style="color: #0275d8;">BÁO CÁO GÓI THẦU & YCBG Y TẾ NGÀY {TODAY_STR}</h2>
         <p>Phát hiện <b>{len(matched_items)}</b> thông báo phù hợp danh mục từ khóa theo dõi:</p>
         <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%;">
             <tr style="background-color: #f2f2f2;">
@@ -159,36 +152,26 @@ def build_fallback_html(matched_items):
 
 
 def generate_email_body(matched_items):
-    # Nếu API Key trống hoặc lỗi SDK, chuyển sang tạo HTML thủ công
-    if not GEMINI_API_KEY:
-        print("[THÔNG BÁO] Không tìm thấy GEMINI_API_KEY, chuyển sang chế độ tạo Email thủ công.")
-        return build_fallback_html(matched_items)
-
-    try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        prompt = f"""
-        Bạn là Trợ lý CNTT. Dưới đây là danh sách các Yêu cầu báo giá (YCBG) và Thông báo mời thầu (TBMT) thu thập được từ muasamcong.mof.gov.vn trong ngày {TODAY_STR}:
-        {matched_items}
-
-        NHIỆM VỤ:
-        1. Trình bày danh sách trên dưới dạng BẢNG HTML đẹp mắt gửi email.
-        2. Các cột trong bảng gồm: STT, Phân loại (TBMT hoặc YCBG), Mã số gói thầu/YCBG, Tên gói thầu/Yêu cầu báo giá, Chủ đầu tư/Bên mời chào giá, Từ khóa phát hiện, Link xem chi tiết.
-        3. Thêm phần thống kê tổng số lượng gói thầu tìm thấy ở đầu Email.
-        """
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
-        return response.text
-    except Exception as e:
-        print(f"[CẢNH BÁO GEMINI] Lỗi gọi Gemini SDK ({e}), dùng HTML fallback.")
-        return build_fallback_html(matched_items)
+    # Ưu tiên thử dùng Gemini SDK, nếu lỗi tự chuyển sang HTML thuần
+    if GEMINI_API_KEY:
+        try:
+            from google import genai
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            prompt = f"Tạo bảng HTML đẹp báo cáo danh sách gói thầu sau ngày {TODAY_STR}: {matched_items}"
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt
+            )
+            return response.text
+        except Exception as e:
+            print(f"[CẢNH BÁO GEMINI] {e}, chuyển sang HTML mặc định.")
+    
+    return generate_html_report(matched_items)
 
 
-# ================= 5. GỬI EMAIL THÔNG BÁO =================
 def send_email(subject, html_content):
     if not SENDER_EMAIL or not SENDER_PASSWORD:
-        print("[LỖI] Thiếu SENDER_EMAIL hoặc SENDER_PASSWORD trong GitHub Secrets!")
+        print("[LỖI] Thiếu SENDER_EMAIL hoặc SENDER_PASSWORD!")
         return
 
     msg = MIMEMultipart("alternative")
@@ -203,20 +186,19 @@ def send_email(subject, html_content):
             server.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, msg.as_string())
         print(f"[EMAIL] Đã gửi báo cáo thành công tới {RECEIVER_EMAIL}!")
     except Exception as e:
-        print(f"[LỖI EMAIL] Không thể gửi email: {e}")
+        print(f"[LỖI EMAIL] Không thể gửi: {e}")
 
 
-# ================= 6. TIẾN TRÌNH CHÍNH =================
+# ================= 5. CHƯƠNG TRÌNH CHÍNH =================
 if __name__ == "__main__":
     print(f"==================================================")
     print(f"   BẮT ĐẦU CRAWL DỮ LIỆU THẦU DAILY - {TODAY_STR}")
     print(f"==================================================")
     
     results = run_crawler()
-    print(f"--> [TỔNG KẾT] Phát hiện tổng cộng: {len(results)} gói thầu/YCBG khớp từ khóa.")
+    print(f"--> [TỔNG KẾT] Phát hiện: {len(results)} gói thầu/YCBG khớp từ khóa.")
     
     email_body = generate_email_body(results)
-    
     subject = f"[TBMT & YCBG Y TẾ] Báo cáo ngày {TODAY_STR}"
     send_email(subject, email_body)
     
