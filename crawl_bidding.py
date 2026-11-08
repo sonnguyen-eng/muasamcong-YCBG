@@ -6,7 +6,8 @@ from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-# ================= 1. CẤU HÌNH BIẾN & TỪ KHÓA =================
+# ================= 1. CẤU HÌNH TỪ KHÓA & MÔI TRƯỜNG =================
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "").strip()
 SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD", "").strip()
 RECEIVER_EMAIL = SENDER_EMAIL
@@ -21,7 +22,7 @@ NOW_VN = datetime.now(TZ_VN)
 TODAY_STR = NOW_VN.strftime("%d/%m/%Y")
 
 
-# ================= 2. QUÉT TRỰC TIẾP API MUA SẮM CÔNG =================
+# ================= 2. QUÉT TRỰC TIẾP API MUA SẮM CÔNG V2 =================
 def fetch_api(search_type, keyword):
     if search_type == "YCBG":
         url = "https://muasamcong.mof.gov.vn/o/egp-portal-contractor-selection-v2/services/smart/search"
@@ -57,7 +58,7 @@ def fetch_api(search_type, keyword):
                 results.extend(items)
             time.sleep(0.3)
         except Exception as e:
-            print(f"[API WARN] {search_type} '{keyword}' p.{page}: {e}")
+            print(f"[CẢNH BÁO API] {search_type} '{keyword}' trang {page}: {e}")
             break
 
     return results
@@ -67,7 +68,7 @@ def run_crawler():
     unique_items = {}
 
     for kw in KEYWORDS:
-        print(f"-> Quét từ khóa: '{kw}'...")
+        print(f"-> Đang quét từ khóa: '{kw}'...")
         
         # Quét YCBG
         ycbg = fetch_api("YCBG", kw)
@@ -100,59 +101,80 @@ def run_crawler():
     return list(unique_items.values())
 
 
-# ================= 3. RENDER EMAIL HTML & GỬI EMAIL =================
-def send_report_email(items):
-    if not SENDER_EMAIL or not SENDER_PASSWORD:
-        print("[LỖI] Thiếu SENDER_EMAIL hoặc SENDER_PASSWORD trong GitHub Secrets!")
-        return
-
-    if not items:
-        html_body = f"""
+# ================= 3. ĐỊNH DẠNG BÁO CÁO & GỬI EMAIL =================
+def generate_html_report(matched_items):
+    if not matched_items:
+        return f"""
         <div style="font-family: Arial, sans-serif; padding: 20px;">
             <h3 style="color: #d9534f;">BÁO CÁO QUÉT THẦU TỰ ĐỘNG - NGÀY {TODAY_STR}</h3>
             <p>Hệ thống đã truy vấn thành công tới máy chủ Mua Sắm Công nhưng không tìm thấy thông báo thầu/YCBG nào mới chứa danh mục từ khóa theo dõi.</p>
         </div>
         """
-    else:
-        html_body = f"""
-        <div style="font-family: Arial, sans-serif; padding: 20px;">
-            <h2 style="color: #0275d8;">BÁO CÁO GÓI THẦU & YCBG Y TẾ NGÀY {TODAY_STR}</h2>
-            <p>Phát hiện <b>{len(items)}</b> thông báo phù hợp danh mục từ khóa theo dõi:</p>
-            <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%;">
-                <tr style="background-color: #f2f2f2;">
-                    <th align="center">STT</th>
-                    <th align="center">Phân loại</th>
-                    <th>Mã gói</th>
-                    <th>Tên gói thầu / YCBG</th>
-                    <th>Bên mời chào giá</th>
-                    <th align="center">Từ khóa khớp</th>
-                    <th align="center">Chi tiết</th>
-                </tr>
-        """
-        for idx, item in enumerate(items, 1):
-            if item['type'] == 'YCBG':
-                link = f"https://muasamcong.mof.gov.vn/web/guest/contractor-selection?type=es-ycbg&stepCode=request-quote-step-1&notifyNo={item['code']}"
-            else:
-                link = f"https://muasamcong.mof.gov.vn/vi/web/guest/initiator?tbmtNo={item['code']}"
 
-            html_body += f"""
-                <tr>
-                    <td align="center">{idx}</td>
-                    <td align="center"><b>{item['type']}</b></td>
-                    <td>{item['code']}</td>
-                    <td>{item['title']}</td>
-                    <td>{item['investor']}</td>
-                    <td align="center"><span style="background-color: #ffffcc;">{item['matched_kw']}</span></td>
-                    <td align="center"><a href="{link}" target="_blank">Xem chi tiết</a></td>
-                </tr>
-            """
-        html_body += "</table></div>"
+    html = f"""
+    <div style="font-family: Arial, sans-serif; padding: 20px;">
+        <h2 style="color: #0275d8;">BÁO CÁO GÓI THẦU & YCBG Y TẾ NGÀY {TODAY_STR}</h2>
+        <p>Phát hiện <b>{len(matched_items)}</b> thông báo phù hợp danh mục từ khóa theo dõi:</p>
+        <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%;">
+            <tr style="background-color: #f2f2f2;">
+                <th align="center">STT</th>
+                <th align="center">Phân loại</th>
+                <th>Mã gói</th>
+                <th>Tên gói thầu / YCBG</th>
+                <th>Bên mời chào giá</th>
+                <th align="center">Từ khóa khớp</th>
+                <th align="center">Chi tiết</th>
+            </tr>
+    """
+    for idx, item in enumerate(matched_items, 1):
+        if item['type'] == 'YCBG':
+            link = f"https://muasamcong.mof.gov.vn/web/guest/contractor-selection?type=es-ycbg&stepCode=request-quote-step-1&notifyNo={item['code']}"
+        else:
+            link = f"https://muasamcong.mof.gov.vn/vi/web/guest/initiator?tbmtNo={item['code']}"
+
+        html += f"""
+            <tr>
+                <td align="center">{idx}</td>
+                <td align="center"><b>{item['type']}</b></td>
+                <td>{item['code']}</td>
+                <td>{item['title']}</td>
+                <td>{item['investor']}</td>
+                <td align="center"><span style="background-color: #ffffcc;">{item['matched_kw']}</span></td>
+                <td align="center"><a href="{link}" target="_blank">Xem chi tiết</a></td>
+            </tr>
+        """
+    html += "</table></div>"
+    return html
+
+
+def generate_email_body(matched_items):
+    if GEMINI_API_KEY:
+        try:
+            from google import genai
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            prompt = f"Hãy tạo bảng báo cáo HTML đẹp mắt danh sách các gói thầu ngày {TODAY_STR}: {matched_items}"
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt
+            )
+            if response and response.text:
+                return response.text
+        except Exception as e:
+            print(f"[CẢNH BÁO AI] Lỗi Gemini SDK ({e}), tự động chuyển sang mẫu HTML chuẩn.")
+    
+    return generate_html_report(matched_items)
+
+
+def send_email(subject, html_content):
+    if not SENDER_EMAIL or not SENDER_PASSWORD:
+        print("[LỖI KỸ THUẬT] Chưa thiết lập SENDER_EMAIL hoặc SENDER_PASSWORD trong GitHub Secrets!")
+        return
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"[TBMT & YCBG Y TẾ] Báo cáo ngày {TODAY_STR}"
+    msg["Subject"] = subject
     msg["From"] = SENDER_EMAIL
     msg["To"] = RECEIVER_EMAIL
-    msg.attach(MIMEText(html_body, "html"))
+    msg.attach(MIMEText(html_content, "html"))
 
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
@@ -160,16 +182,17 @@ def send_report_email(items):
             server.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, msg.as_string())
         print(f"[SUCCESS] Đã gửi báo cáo email thành công tới {RECEIVER_EMAIL}!")
     except Exception as e:
-        print(f"[LỖI EMAIL] Không thể gửi: {e}")
+        print(f"[LỖI EMAIL] Không thể gửi email: {e}")
 
 
-# ================= 4. CHƯƠNG TRÌNH CHÍNH =================
+# ================= 4. LUỒNG CHÍNH CHỐNG CRASH =================
 if __name__ == "__main__":
-    print(f"=== BẮT ĐẦU CRAWL MUA SẮM CÔNG - NGÀY {TODAY_STR} ===")
+    print(f"=== BẮT ĐẦU QUÉT DỮ LIỆU - NGÀY {TODAY_STR} ===")
     try:
         data = run_crawler()
         print(f"-> Tìm thấy tổng cộng: {len(data)} gói thầu/YCBG.")
-        send_report_email(data)
-    except Exception as err:
-        print(f"[LỖI CHÍNH]: {err}")
-    print("=== HOÀN THÀNH ===")
+        body = generate_email_body(data)
+        send_email(f"[TBMT & YCBG Y TẾ] Báo cáo ngày {TODAY_STR}", body)
+    except Exception as main_err:
+        print(f"[LỖI THỰC THI]: {main_err}")
+    print("=== HOÀN THÀNH TIẾN TRÌNH ===")
