@@ -1,12 +1,13 @@
 import os
 import time
 import smtplib
+import json
 import requests
 from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-# ================= 1. CẤU HÌNH TỪ KHÓA & MÔI TRƯỜNG =================
+# 1. Cấu hình Email & Từ khóa
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "").strip()
 SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD", "").strip()
 RECEIVER_EMAIL = SENDER_EMAIL
@@ -20,7 +21,7 @@ TZ_VN = timezone(timedelta(hours=7))
 TODAY_STR = datetime.now(TZ_VN).strftime("%d/%m/%Y")
 
 
-# ================= 2. QUÉT TRỰC TIẾP API YCBG (PAYLOAD F12 MẢNG) =================
+# 2. Truy vấn API YCBG theo Payload F12 chuẩn
 def fetch_ycbg_api():
     url = "https://muasamcong.mof.gov.vn/o/egp-portal-contractor-selection-v2/services/smart/search"
     headers = {
@@ -32,7 +33,6 @@ def fetch_ycbg_api():
     }
     
     collected_items = []
-    # Quét 4 trang đầu tiên (200 YCBG mới nhất)
     for page in range(4):
         payload = [
             {
@@ -73,11 +73,24 @@ def fetch_ycbg_api():
     return collected_items
 
 
-# ================= 3. ĐỐI SOÁT DỮ LIỆU & RENDER HTML =================
+# 3. Hàm trích xuất TOÀN BỘ văn bản (bao gồm danh mục hàng hóa chi tiết trong JSON)
+def extract_full_searchable_text(item):
+    """
+    Chuyển toàn bộ đối tượng JSON gói thầu thành chuỗi văn bản 
+    để quét từ khóa trong mọi ngóc ngách danh mục hàng hóa chi tiết.
+    """
+    try:
+        # Chuyển toàn bộ dữ liệu gói thầu thành văn bản thường (lower case)
+        text_content = json.dumps(item, ensure_ascii=False).lower()
+        return text_content
+    except Exception:
+        return ""
+
+
 def main_ycbg():
-    print(f"=== BẮT ĐẦU QUÉT YCBG - NGÀY {TODAY_STR} ===")
+    print(f"=== BẮT ĐẦU QUÉT YCBG SÂU DANH MỤC HÀNG HÓA - NGÀY {TODAY_STR} ===")
     raw_list = fetch_ycbg_api()
-    print(f"-> Thu thập từ server: {len(raw_list)} YCBG.")
+    print(f"-> Thu thập thô từ server: {len(raw_list)} YCBG.")
     
     unique_matches = {}
     for item in raw_list:
@@ -85,47 +98,52 @@ def main_ycbg():
         title = str(item.get("bidName") or item.get("name") or item.get("title") or "")
         investor = str(item.get("procuringEntityName") or item.get("investorName") or "")
         
-        full_text = f"{code} {title} {investor}".lower()
+        # Lấy toàn bộ văn bản chi tiết (gồm danh mục vật tư/hàng hóa)
+        full_searchable_text = extract_full_searchable_text(item)
         
-        # Bỏ qua nếu có "ống soi"
-        if EXCLUDE_KEYWORD.lower() in full_text:
+        # 1. Bỏ qua nếu xuất hiện từ khóa loại trừ "ống soi" ở bất kỳ đâu
+        if EXCLUDE_KEYWORD.lower() in full_searchable_text:
             continue
             
-        # Lọc theo danh mục từ khóa
+        # 2. Quét từ khóa trong TOÀN BỘ dữ liệu chi tiết
         for kw in KEYWORDS:
-            if kw.lower() in full_text:
+            if kw.lower() in full_searchable_text:
                 if code and code not in unique_matches:
+                    # Kiểm tra xem từ khóa nằm ở Tiêu đề hay nằm sâu trong Danh mục hàng hóa
+                    matched_location = "Tiêu đề" if kw.lower() in f"{code} {title}".lower() else "Chi tiết Hàng hóa"
                     unique_matches[code] = {
                         "code": code,
                         "title": title,
                         "investor": investor,
-                        "matched_kw": kw
+                        "matched_kw": kw,
+                        "location": matched_location
                     }
                 break
 
     matched_list = list(unique_matches.values())
-    print(f"-> Khớp từ khóa: {len(matched_list)} gói YCBG.")
+    print(f"-> Khớp từ khóa (bao gồm danh mục hàng hóa): {len(matched_list)} gói YCBG.")
 
-    # Tạo nội dung Email
+    # Render HTML Báo cáo
     if not matched_list:
         html_body = f"""
         <div style="font-family: Arial, sans-serif; padding: 20px;">
-            <h3 style="color: #d9534f;">YÊU CẦU BÁO GIÁ (YCBG) NGÀY {TODAY_STR}</h3>
-            <p>Hệ thống đã truy vấn thành công nhưng không có YCBG mới nào chứa các từ khóa theo dõi trong ngày.</p>
+            <h3 style="color: #d9534f;">BÁO CÁO YÊU CẦU BÁO GIÁ (YCBG) NGÀY {TODAY_STR}</h3>
+            <p>Hệ thống kết nối thành công nhưng không tìm thấy từ khóa theo dõi trong tiêu đề hoặc danh mục hàng hóa chi tiết.</p>
         </div>
         """
     else:
         html_body = f"""
         <div style="font-family: Arial, sans-serif; padding: 20px;">
             <h2 style="color: #0275d8;">BÁO CÁO YÊU CẦU BÁO GIÁ (YCBG) NGÀY {TODAY_STR}</h2>
-            <p>Phát hiện <b>{len(matched_list)}</b> YCBG phù hợp danh mục theo dõi:</p>
+            <p>Phát hiện <b>{len(matched_list)}</b> YCBG phù hợp danh mục theo dõi (đã quét sâu danh mục mặt hàng):</p>
             <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%;">
                 <tr style="background-color: #e6f2ff;">
                     <th align="center">STT</th>
                     <th>Mã YCBG</th>
                     <th>Tên Yêu Cầu Báo Giá</th>
                     <th>Bên Mời Chào Giá</th>
-                    <th align="center">Từ Khóa Khớp</th>
+                    <th align="center">Từ Khóa</th>
+                    <th align="center">Vị Trí Khớp</th>
                     <th align="center">Chi Tiết</th>
                 </tr>
         """
@@ -138,15 +156,16 @@ def main_ycbg():
                     <td>{item['title']}</td>
                     <td>{item['investor']}</td>
                     <td align="center"><span style="background-color: #ffffcc;">{item['matched_kw']}</span></td>
+                    <td align="center"><i>{item['location']}</i></td>
                     <td align="center"><a href="{link}" target="_blank">Xem ngay</a></td>
                 </tr>
             """
         html_body += "</table></div>"
 
-    # Gửi Email SMTP
+    # Gửi Email
     if SENDER_EMAIL and SENDER_PASSWORD:
         msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"[YCBG -Nội Soi] Báo cáo ngày {TODAY_STR}"
+        msg["Subject"] = f"[YCBG Y TẾ] Báo cáo ngày {TODAY_STR}"
         msg["From"] = SENDER_EMAIL
         msg["To"] = RECEIVER_EMAIL
         msg.attach(MIMEText(html_body, "html"))
@@ -157,8 +176,6 @@ def main_ycbg():
             print(f"[SUCCESS] Đã gửi báo cáo YCBG thành công tới {RECEIVER_EMAIL}!")
         except Exception as e:
             print(f"[LỖI GỬI EMAIL] {e}")
-    else:
-        print("[CẢNH BÁO] Thiếu SENDER_EMAIL hoặc SENDER_PASSWORD trong GitHub Secrets!")
 
 
 if __name__ == "__main__":
