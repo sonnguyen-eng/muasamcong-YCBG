@@ -25,7 +25,7 @@ KEYWORDS = [
     "Bồn oxy lỏng", "Oxy trung tâm"
 ]
 
-# 2. DANH SÁCH 14 TỈNH / THÀNH PHỐ MỤC TIÊU (CHUẨN TỈNH ĐẮK LẮK & THÀNH PHỐ ĐỒNG NAI)
+# 2. DANH SÁCH 14 TỈNH / THÀNH PHỐ MỤC TIÊU
 TARGET_LOCATIONS = [
     "Thành phố Đà Nẵng", "Tỉnh Quảng Ngãi", "Tỉnh Đắk Lắk", "Tỉnh Gia Lai", 
     "Tỉnh Khánh Hòa", "Tỉnh Lâm Đồng", "Thành phố Hồ Chí Minh", "Thành phố Đồng Nai", 
@@ -81,7 +81,7 @@ def format_date_str(date_str):
 def check_location(item, raw_str):
     found_locs = []
     investor = str(item.get("investorName") or item.get("procuringEntityName") or "").lower()
-    title = str(item.get("name") or item.get("bidName") or "").lower()
+    title = str(item.get("name") or item.get("pname") or "").lower()
     search_text = f"{investor} {title} {raw_str}"
 
     locations_arr = item.get("locations", [])
@@ -105,7 +105,7 @@ def check_location(item, raw_str):
 
     return list(set(found_locs))
 
-# 7. DEEP-SCAN LẤY CHI TIẾT DANH MỤC HÀNG HÓA YCCG (GET-REQUEST-QUOTE)
+# 7. DEEP-SCAN LẤY CHI TIẾT DANH MỤC HÀNG HÓA YCBG (GET-REQUEST-QUOTE)
 def get_yccg_form_values(driver, yc_id):
     js_get_yccg = """
     var callback = arguments[arguments.length - 1];
@@ -133,7 +133,7 @@ def get_yccg_form_values(driver, yc_id):
         pass
     return ""
 
-# 8. TẠO URL CHI TIẾT YCCG CHUẨN V2
+# 8. TẠO URL CHI TIẾT YCBG CHUẨN V2
 def build_yccg_detail_url(item, code, yc_id, bid_form):
     url = (
         f"https://{BASE_DOMAIN}/web/guest/contractor-selection?"
@@ -149,13 +149,12 @@ def build_yccg_detail_url(item, code, yc_id, bid_form):
     )
     return url
 
-# 9. TRÍCH XUẤT DỮ LIỆU YCCG TRONG NGÀY
+# 9. TRÍCH XUẤT DỮ LIỆU YCBG TRONG NGÀY
 def fetch_yccg_today(driver):
-    print(f"-> Đang mở trình duyệt và kết nối Session Mua Sắm Công YCCG (Ngày {TODAY_STR})...")
+    print(f"-> Đang kết nối Session Mua Sắm Công YCBG (Quét YCCG ngày {TODAY_STR})...")
     driver.get(f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index")
     time.sleep(10)
 
-    # Trích xuất Token bảo mật động
     js_get_token = """
     let token = '';
     let entries = window.performance.getEntriesByType('resource');
@@ -172,11 +171,10 @@ def fetch_yccg_today(driver):
     """
     token_val = driver.execute_script(js_get_token)
     if token_val:
-        print(f"-> Token YCCG trích xuất từ Session: {token_val[:20]}...")
+        print(f"-> Token YCBG trích xuất từ Session: {token_val[:20]}...")
 
     unique_matches = {}
 
-    # Query Smart Search chuyển vùng lọc sang 'es-ycbg'
     js_fetch_search_yccg = """
     var callback = arguments[arguments.length - 1];
     var kw = arguments[0];
@@ -215,7 +213,7 @@ def fetch_yccg_today(driver):
     search_queries = KEYWORDS + ["thiết bị y tế", "y tế", "bệnh viện", "báo giá", "vật tư y tế"]
 
     for kw in search_queries:
-        print(f"-> Truy vấn YCCG cho từ khóa: '{kw}'...")
+        print(f"-> Truy vấn YCBG cho từ khóa: '{kw}'...")
         try:
             res = driver.execute_async_script(js_fetch_search_yccg, kw, token_val)
             data_list = []
@@ -235,7 +233,6 @@ def fetch_yccg_today(driver):
                 if not isinstance(item, dict):
                     continue
 
-                # Chỉ lấy YCCG đăng từ 00h00 trong ngày hôm nay
                 if not is_published_strictly_today(item):
                     continue
 
@@ -250,7 +247,6 @@ def fetch_yccg_today(driver):
                 detail_url = build_yccg_detail_url(item, code, yc_id, bid_form)
                 raw_str = json.dumps(item, ensure_ascii=False).lower()
 
-                # DEEP-SCAN bóc tách Biểu mẫu hàng hóa YCCG
                 if yc_id:
                     yccg_detail_str = get_yccg_form_values(driver, yc_id)
                     if yccg_detail_str:
@@ -275,15 +271,15 @@ def fetch_yccg_today(driver):
                                 "detail_url": detail_url,
                                 "snippet": raw_str[:1200]
                             }
-            print(f"   + Server trả về {len(data_list)} YCCG -> Khớp ngày {TODAY_STR}, địa phương & từ khóa: {matched_in_kw} thông báo.")
+            print(f"   + Server trả về {len(data_list)} YCBG -> Khớp ngày {TODAY_STR}, địa phương & từ khóa: {matched_in_kw} thông báo.")
             time.sleep(0.5)
         except Exception as e:
-            print(f"[CẢNH BÁO FETCH YCCG] Từ khóa '{kw}': {e}")
+            print(f"[CẢNH BÁO FETCH YCBG] Từ khóa '{kw}': {e}")
             continue
 
     return list(unique_matches.values())
 
-# 10. PHÂN TÍCH YCCG VỚI GEMINI AI
+# 10. PHÂN TÍCH YCBG VỚI GEMINI AI
 def analyze_with_gemini(candidates):
     if not candidates or not GEMINI_API_KEY:
         return candidates
@@ -296,7 +292,7 @@ def analyze_with_gemini(candidates):
         
         prompt = f"""
 Bạn là chuyên gia phân tích dữ liệu Báo giá Trang thiết bị Y tế.
-Dưới đây là danh sách các Yêu cầu báo giá (YCCG) phát hành trong ngày {TODAY_STR} đã lọc theo địa phương và 19 từ khóa y tế.
+Dưới đây là danh sách các Yêu cầu báo giá (YCBG) phát hành trong ngày {TODAY_STR} đã lọc theo địa phương và 19 từ khóa y tế.
 
 Yêu cầu:
 1. Giữ nguyên toàn bộ danh sách đầu vào.
@@ -331,7 +327,7 @@ Chỉ trả về chuỗi JSON thuần túy (không kèm markdown).
         print(f"[THÔNG BÁO AI] {e}")
         return candidates
 
-# 11. GỬI EMAIL BÁO CÁO YCCG
+# 11. GỬI EMAIL BÁO CÁO YCBG
 def send_email_report(matched_list):
     if not RECEIVER_EMAIL:
         print("[LỖI CẤU HÌNH] Chưa khai báo email nhận.")
@@ -406,12 +402,12 @@ def send_email_report(matched_list):
             with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
                 server.login(SENDER_EMAIL, SENDER_PASSWORD)
                 server.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, msg.as_string())
-            print(f"[SUCCESS] Đã gửi báo cáo YCCG thành công tới email: {RECEIVER_EMAIL}!")
+            print(f"[SUCCESS] Đã gửi báo cáo YCBG thành công tới email: {RECEIVER_EMAIL}!")
         except Exception as e:
             print(f"[LỖI GỬI EMAIL SMTP] {e}")
 
 def main():
-    print(f"=== CRAWL & DEEP-SCAN YCCG ĐĂNG TRONG NGÀY {TODAY_STR} ===")
+    print(f"=== CRAWL & DEEP-SCAN YCBG ĐĂNG TRONG NGÀY {TODAY_STR} ===")
     driver = init_driver()
     try:
         matched_list = fetch_yccg_today(driver)
