@@ -279,11 +279,13 @@ def fetch_yccg_today(driver):
 
     return list(unique_matches.values())
 
-# 10. PHÂN TÍCH YCBG VỚI GEMINI AI (AN TOÀN CHỐNG CRASH)
+# 10. PHÂN TÍCH YCBG VỚI GEMINI AI (ĐÃ CẬP NHẬT DANH SÁCH MODEL MỚI CHỐNG LỖI 404)
 def analyze_with_gemini(candidates):
     if not candidates or not GEMINI_API_KEY:
         return candidates
 
+    target_models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash-exp"]
+    
     try:
         from google import genai
         client = genai.Client(api_key=GEMINI_API_KEY)
@@ -295,28 +297,38 @@ Dưới đây là danh sách các Yêu cầu báo giá (YCBG) phát hành trong 
 Yêu cầu:
 1. Giữ nguyên toàn bộ danh sách đầu vào.
 2. Viết 1 câu tóm tắt ngắn gọn danh mục hàng hóa chính cần báo giá.
-3. Trả về đúng mảng JSON chứa các object: "code", "title", "investor", "bid_close_date", "province", "matched_kw", "location", "detail_url", "reason".
+3. Trả về đúng mảng JSON chứa các object đầy đủ thuộc tính và thêm "reason".
 
 Danh sách:
 {json.dumps(candidates, ensure_ascii=False, indent=2)}
 Chỉ trả về chuỗi JSON thuần túy (không kèm markdown).
 """
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt
-        )
-        content = response.text.strip() if response else ""
-        if content:
-            if content.startswith("```json"): content = content[7:]
-            if content.startswith("```"): content = content[3:]
-            if content.endswith("```"): content = content[:-3]
-            return json.loads(content.strip())
+        content = None
+        for model_name in target_models:
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt
+                )
+                if response and response.text:
+                    content = response.text.strip()
+                    break
+            except Exception:
+                continue
+
+        if not content:
+            return candidates
+
+        if content.startswith("```json"): content = content[7:]
+        if content.startswith("```"): content = content[3:]
+        if content.endswith("```"): content = content[:-3]
+        return json.loads(content.strip())
     except Exception as e:
-        print(f"[CẢNH BÁO AI GOOGLE-GENAI] {e} -> Bỏ qua AI, giữ dữ liệu gốc.")
+        print(f"[CẢNH BÁO AI GOOGLE-GENAI] {e} -> Giữ dữ liệu gốc.")
     
     return candidates
 
-# 11. GỬI EMAIL BÁO CÁO YCBG
+# 11. GỬI EMAIL BÁO CÁO YCBG (ĐÃ LÀM SẠCH CHUỖI MULTI-EMAIL CHỐNG LỖI RFC 5321)
 def send_email_report(matched_list):
     if not RECEIVER_EMAIL:
         print("[LỖI CẤU HÌNH] Chưa khai báo email nhận.")
