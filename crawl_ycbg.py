@@ -111,7 +111,7 @@ def main_ycbg():
     if not matched_list:
         html_body = f"""
         <div style="font-family: Arial, sans-serif; padding: 20px;">
-            <h3 style="color: #d9534f;">BÁO CÁO YÊU CẦU BÁO GIÁ (YCBG) NGÀY {TODAY_STR}</h3>
+            <h3 style="color: #d9534f;">YÊU CẦU BÁO GIÁ (YCBG) NGÀY {TODAY_STR}</h3>
             <p>Hệ thống đã truy vấn thành công nhưng không có YCBG mới nào chứa các từ khóa theo dõi trong ngày.</p>
         </div>
         """
@@ -147,7 +147,7 @@ def main_ycbg():
     # Gửi Email SMTP
     if SENDER_EMAIL and SENDER_PASSWORD:
         msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"[YCBG Y TẾ] Báo cáo ngày {TODAY_STR}"
+        msg["Subject"] = f"[YCBG -Nội Soi] Báo cáo ngày {TODAY_STR}"
         msg["From"] = SENDER_EMAIL
         msg["To"] = RECEIVER_EMAIL
         msg.attach(MIMEText(html_body, "html"))
