@@ -1,23 +1,3 @@
-+ Server trả về 0 YCBG -> Khớp ngày 09/11/2026, địa phương & từ khóa: 0 thông báo.
-```[cite: 38]
-
-### 1. Nguyên nhân kỹ thuật
-1. **Thiếu Token bảo mật động trên Session YCBG**: Đoạn log không xuất hiện dòng `-> Token YCBG trích xuất từ Session: ...`, nghĩa là khi `driver.get()` mở trang chính, script chưa bắt được token động của `smart/search` cho luồng YCBG[cite: 31, 38].
-2. **Khi gửi request không kèm Token**: Máy chủ Mua Sắm Công từ chối hoặc trả về mảng rỗng `0 YCBG` cho toàn bộ các từ khóa ("nội soi", "Bàn mổ", "đèn mổ"...)[cite: 31, 38].
-
----
-
-### 2. Giải pháp khắc phục triệt để
-- Tăng thời gian chờ khởi tạo Session và bổ sung bước ép trang web phát sinh API request để trích xuất thành công `token` trước khi thực hiện vòng lặp 19 từ khóa[cite: 31].
-- Thêm cơ chế fallback: Nếu chưa bắt được token từ Performance entries, script sẽ chủ động gửi query tìm kiếm trực tiếp để lấy token bảo mật.
-
----
-
-### Bộ mã nguồn `crawl_ycbg.py` đã khắc phục lỗi
-
-Anh dán đè toàn bộ đoạn code dưới đây vào file **`crawl_ycbg.py`** trong repository **`muasamcong-YCBG`**:
-
-```python
 import os
 import time
 import json
@@ -173,9 +153,8 @@ def build_yccg_detail_url(item, code, yc_id, bid_form):
 def fetch_yccg_today(driver):
     print(f"-> Đang kết nối Session Mua Sắm Công YCBG (Quét YCCG ngày {TODAY_STR})...")
     driver.get(f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index")
-    time.sleep(12)
+    time.sleep(10)
 
-    # Trích xuất Token bảo mật động từ Performance Entry
     js_get_token = """
     let token = '';
     let entries = window.performance.getEntriesByType('resource');
@@ -191,28 +170,8 @@ def fetch_yccg_today(driver):
     return token;
     """
     token_val = driver.execute_script(js_get_token)
-
-    # Nếu chưa bắt được token, thực hiện trigger search mồi để sinh token
-    if not token_val:
-        js_trigger_search = """
-        var callback = arguments[arguments.length - 1];
-        fetch('/o/egp-portal-contractor-selection-v2/services/smart/search', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify([{ pageSize: 1, pageNumber: "0", query: [{ index: "es-contractor-selection", keyWord: "nội soi", matchType: "all-1", matchFields: ["notifyNo", "name"], filters: [{ fieldName: "type", searchType: "in", fieldValues: ["es-ycbg"] }] }] }])
-        }).then(r => r.json()).then(d => callback(d)).catch(e => callback({}));
-        """
-        try:
-            driver.execute_async_script(js_trigger_search)
-            time.sleep(2)
-            token_val = driver.execute_script(js_get_token)
-        except Exception:
-            pass
-
     if token_val:
         print(f"-> Token YCBG trích xuất từ Session: {token_val[:20]}...")
-    else:
-        print("-> [CẢNH BÁO] Không lấy được Token động, sẽ thử gửi request không token...")
 
     unique_matches = {}
 
@@ -320,13 +279,11 @@ def fetch_yccg_today(driver):
 
     return list(unique_matches.values())
 
-# 10. PHÂN TÍCH YCBG VỚI GEMINI AI
+# 10. PHÂN TÍCH YCBG VỚI GEMINI AI (AN TOÀN CHỐNG CRASH)
 def analyze_with_gemini(candidates):
     if not candidates or not GEMINI_API_KEY:
         return candidates
 
-    target_models = ["gemini-2.0-flash", "gemini-1.5-flash"]
-    
     try:
         from google import genai
         client = genai.Client(api_key=GEMINI_API_KEY)
@@ -344,29 +301,20 @@ Danh sách:
 {json.dumps(candidates, ensure_ascii=False, indent=2)}
 Chỉ trả về chuỗi JSON thuần túy (không kèm markdown).
 """
-        content = None
-        for model_name in target_models:
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt
-                )
-                content = response.text.strip()
-                if content:
-                    break
-            except Exception:
-                continue
-
-        if not content:
-            return candidates
-
-        if content.startswith("```json"): content = content[7:]
-        if content.startswith("```"): content = content[3:]
-        if content.endswith("```"): content = content[:-3]
-        return json.loads(content.strip())
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt
+        )
+        content = response.text.strip() if response else ""
+        if content:
+            if content.startswith("```json"): content = content[7:]
+            if content.startswith("```"): content = content[3:]
+            if content.endswith("```"): content = content[:-3]
+            return json.loads(content.strip())
     except Exception as e:
-        print(f"[THÔNG BÁO AI] {e}")
-        return candidates
+        print(f"[CẢNH BÁO AI GOOGLE-GENAI] {e} -> Bỏ qua AI, giữ dữ liệu gốc.")
+    
+    return candidates
 
 # 11. GỬI EMAIL BÁO CÁO YCBG
 def send_email_report(matched_list):
