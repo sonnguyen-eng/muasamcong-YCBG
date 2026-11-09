@@ -12,8 +12,7 @@ SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD", "").strip()
 RECEIVER_EMAIL = SENDER_EMAIL
 
 KEYWORDS = [
-    "nội soi", "nội soi tiêu hóa", "nội soi khí phế quản", 
-    "Bàn mổ", "đèn mổ", "hệ thống khí y tế", "vận chuyển mẫu", "ERCP"
+    "nội soi", "nội soi tiêu hóa", "nội soi khí phế quản", "Bàn mổ", "đèn mổ", "hệ thống khí y tế", "vận chuyển mẫu", "ERCP", "Monitor theo dõi bệnh nhân", "Máy hấp tiệt trùng", "Nhiệt độ thấp", "máy gây mê giúp thở", "Bơm tiêm điện", "máy truyền dịch"
 ]
 EXCLUDE_KEYWORD = "ống soi"
 
