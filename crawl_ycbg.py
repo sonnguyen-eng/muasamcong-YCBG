@@ -11,7 +11,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 
-# 1. CẤU HÌNH BIẾN MÔI TRƯỜNG & BỘ 19 TỪ KHÓA Y TẾ CHUẨN
+# 1. CẤU HÌNH BIẾN MÔI TRƯỜNG & DANH SÁCH 19 TỪ KHÓA Y TẾ
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "").strip()
 SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD", "").strip()
@@ -27,7 +27,7 @@ KEYWORDS = [
 
 # 2. DANH SÁCH 14 TỈNH / THÀNH PHỐ MỤC TIÊU
 TARGET_LOCATIONS = [
-    "Thành phố Đà Nẵng", "Tỉnh Quảng Ngãi", "Tỉnh Đắk Lắk", "Tỉnh Gia Lai", 
+    "Thành phố Đà Nẵng", "Tỉnh Quảng Ngãi", "Tỉnh Đắc Lắk", "Tỉnh Đắk Lắk", "Tỉnh Gia Lai", 
     "Tỉnh Khánh Hòa", "Tỉnh Lâm Đồng", "Thành phố Hồ Chí Minh", "Thành phố Đồng Nai", 
     "Tỉnh Tây Ninh", "Tỉnh Đồng Tháp", "Tỉnh Vĩnh Long", "Tỉnh An Giang", 
     "Thành phố Cần Thơ", "Tỉnh Cà Mau"
@@ -327,10 +327,16 @@ Chỉ trả về chuỗi JSON thuần túy (không kèm markdown).
         print(f"[THÔNG BÁO AI] {e}")
         return candidates
 
-# 11. GỬI EMAIL BÁO CÁO YCBG
+# 11. GỬI EMAIL BÁO CÁO YCBG (TỰ ĐỘNG CHUẨN HÓA DANH SÁCH RECEIVER_EMAIL)
 def send_email_report(matched_list):
     if not RECEIVER_EMAIL:
         print("[LỖI CẤU HÌNH] Chưa khai báo email nhận.")
+        return
+
+    # Chuẩn hóa mảng email, loại bỏ khoảng trắng và xuống dòng thừa
+    receiver_list = [e.strip() for e in RECEIVER_EMAIL.replace("\n", "").split(",") if e.strip()]
+    if not receiver_list:
+        print("[LỖI CẤU HÌNH] Danh sách email nhận không hợp lệ.")
         return
 
     email_subject = f"[YCCG TBYT - Địa bàn phụ trách] Báo cáo Yêu cầu báo giá ngày {TODAY_STR}"
@@ -396,13 +402,13 @@ def send_email_report(matched_list):
         msg = MIMEMultipart("alternative")
         msg["Subject"] = email_subject
         msg["From"] = SENDER_EMAIL
-        msg["To"] = RECEIVER_EMAIL
+        msg["To"] = ", ".join(receiver_list)
         msg.attach(MIMEText(html_body, "html"))
         try:
             with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
                 server.login(SENDER_EMAIL, SENDER_PASSWORD)
-                server.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, msg.as_string())
-            print(f"[SUCCESS] Đã gửi báo cáo YCBG thành công tới email: {RECEIVER_EMAIL}!")
+                server.sendmail(SENDER_EMAIL, receiver_list, msg.as_string())
+            print(f"[SUCCESS] Đã gửi báo cáo YCBG thành công tới các email: {', '.join(receiver_list)}!")
         except Exception as e:
             print(f"[LỖI GỬI EMAIL SMTP] {e}")
 
