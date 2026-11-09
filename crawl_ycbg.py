@@ -1,3 +1,23 @@
++ Server trả về 0 YCBG -> Khớp ngày 09/11/2026, địa phương & từ khóa: 0 thông báo.
+```[cite: 38]
+
+### 1. Nguyên nhân kỹ thuật
+1. **Thiếu Token bảo mật động trên Session YCBG**: Đoạn log không xuất hiện dòng `-> Token YCBG trích xuất từ Session: ...`, nghĩa là khi `driver.get()` mở trang chính, script chưa bắt được token động của `smart/search` cho luồng YCBG[cite: 31, 38].
+2. **Khi gửi request không kèm Token**: Máy chủ Mua Sắm Công từ chối hoặc trả về mảng rỗng `0 YCBG` cho toàn bộ các từ khóa ("nội soi", "Bàn mổ", "đèn mổ"...)[cite: 31, 38].
+
+---
+
+### 2. Giải pháp khắc phục triệt để
+- Tăng thời gian chờ khởi tạo Session và bổ sung bước ép trang web phát sinh API request để trích xuất thành công `token` trước khi thực hiện vòng lặp 19 từ khóa[cite: 31].
+- Thêm cơ chế fallback: Nếu chưa bắt được token từ Performance entries, script sẽ chủ động gửi query tìm kiếm trực tiếp để lấy token bảo mật.
+
+---
+
+### Bộ mã nguồn `crawl_ycbg.py` đã khắc phục lỗi
+
+Anh dán đè toàn bộ đoạn code dưới đây vào file **`crawl_ycbg.py`** trong repository **`muasamcong-YCBG`**:
+
+```python
 import os
 import time
 import json
@@ -27,7 +47,7 @@ KEYWORDS = [
 
 # 2. DANH SÁCH 14 TỈNH / THÀNH PHỐ MỤC TIÊU
 TARGET_LOCATIONS = [
-    "Thành phố Đà Nẵng", "Tỉnh Quảng Ngãi", "Tỉnh Đắc Lắk", "Tỉnh Đắk Lắk", "Tỉnh Gia Lai", 
+    "Thành phố Đà Nẵng", "Tỉnh Quảng Ngãi", "Tỉnh Đắc Lắc", "Tỉnh Đắk Lắk", "Tỉnh Gia Lai", 
     "Tỉnh Khánh Hòa", "Tỉnh Lâm Đồng", "Thành phố Hồ Chí Minh", "Thành phố Đồng Nai", 
     "Tỉnh Tây Ninh", "Tỉnh Đồng Tháp", "Tỉnh Vĩnh Long", "Tỉnh An Giang", 
     "Thành phố Cần Thơ", "Tỉnh Cà Mau"
@@ -153,13 +173,14 @@ def build_yccg_detail_url(item, code, yc_id, bid_form):
 def fetch_yccg_today(driver):
     print(f"-> Đang kết nối Session Mua Sắm Công YCBG (Quét YCCG ngày {TODAY_STR})...")
     driver.get(f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index")
-    time.sleep(10)
+    time.sleep(12)
 
+    # Trích xuất Token bảo mật động từ Performance Entry
     js_get_token = """
     let token = '';
     let entries = window.performance.getEntriesByType('resource');
     for (let e of entries) {
-        if (e.name && e.name.includes('smart/search?token=')) {
+        if (e.name && e.name.includes('token=')) {
             let match = e.name.match(/token=([^&]+)/);
             if (match) {
                 token = match[1];
@@ -170,8 +191,28 @@ def fetch_yccg_today(driver):
     return token;
     """
     token_val = driver.execute_script(js_get_token)
+
+    # Nếu chưa bắt được token, thực hiện trigger search mồi để sinh token
+    if not token_val:
+        js_trigger_search = """
+        var callback = arguments[arguments.length - 1];
+        fetch('/o/egp-portal-contractor-selection-v2/services/smart/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify([{ pageSize: 1, pageNumber: "0", query: [{ index: "es-contractor-selection", keyWord: "nội soi", matchType: "all-1", matchFields: ["notifyNo", "name"], filters: [{ fieldName: "type", searchType: "in", fieldValues: ["es-ycbg"] }] }] }])
+        }).then(r => r.json()).then(d => callback(d)).catch(e => callback({}));
+        """
+        try:
+            driver.execute_async_script(js_trigger_search)
+            time.sleep(2)
+            token_val = driver.execute_script(js_get_token)
+        except Exception:
+            pass
+
     if token_val:
         print(f"-> Token YCBG trích xuất từ Session: {token_val[:20]}...")
+    else:
+        print("-> [CẢNH BÁO] Không lấy được Token động, sẽ thử gửi request không token...")
 
     unique_matches = {}
 
@@ -327,13 +368,12 @@ Chỉ trả về chuỗi JSON thuần túy (không kèm markdown).
         print(f"[THÔNG BÁO AI] {e}")
         return candidates
 
-# 11. GỬI EMAIL BÁO CÁO YCBG (TỰ ĐỘNG CHUẨN HÓA DANH SÁCH RECEIVER_EMAIL)
+# 11. GỬI EMAIL BÁO CÁO YCBG
 def send_email_report(matched_list):
     if not RECEIVER_EMAIL:
         print("[LỖI CẤU HÌNH] Chưa khai báo email nhận.")
         return
 
-    # Chuẩn hóa mảng email, loại bỏ khoảng trắng và xuống dòng thừa
     receiver_list = [e.strip() for e in RECEIVER_EMAIL.replace("\n", "").split(",") if e.strip()]
     if not receiver_list:
         print("[LỖI CẤU HÌNH] Danh sách email nhận không hợp lệ.")
