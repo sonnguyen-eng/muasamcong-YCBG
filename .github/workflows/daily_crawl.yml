@@ -1,13 +1,13 @@
-name: Run Daily YCBG Medical Procurement Crawler
+name: Auto Daily YCCG Scanner Workflow
 
 on:
+  workflow_dispatch:
   schedule:
-    # Kích hoạt lúc 23:40 Giờ Việt Nam (16:40 UTC) hàng ngày
-    - cron: '40 16 * * *'
-  workflow_dispatch: # Cho phép bấm thủ công bất kỳ lúc nào
+    # 13:15 UTC = 20:15 tối Giờ Việt Nam (UTC+7)
+    - cron: '15 13 * * *'
 
 jobs:
-  crawl:
+  run-ycbg-bot:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -16,16 +16,19 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
-          pip install selenium webdriver-manager google-genai
+          pip install selenium webdriver-manager google-genai openpyxl google-api-python-client google-auth-httplib2 google-auth-oauthlib
 
-      - name: Run YCBG Crawler Script
+      - name: Execute YCBG Crawler Bot
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
           SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
           RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
-        run: python crawl_ycbg.py
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
+        run: |
+          python -u crawl_ycbg.py
