@@ -42,7 +42,7 @@ TZ_VN = timezone(timedelta(hours=7))
 NOW_VN = datetime.now(TZ_VN)
 TODAY_STR = NOW_VN.strftime("%H:%M %d/%m/%Y")
 
-# Tính toán mốc START_TIME dựa trên lịch chạy trước (nếu không có thì mặc định 24h trước)
+# Tính toán mốc START_TIME dựa trên lịch chạy tự động trước đó
 if LAST_RUN_ENV:
     try:
         START_TIME = datetime.fromisoformat(LAST_RUN_ENV.replace("Z", "+00:00")).astimezone(TZ_VN)
