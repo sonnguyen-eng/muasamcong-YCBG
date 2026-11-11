@@ -3,7 +3,7 @@ name: Daily YCBG Bot Processor
 on:
   schedule:
     - cron: '0 1 * * *' # Chạy tự động vào 08:00 sáng hàng ngày (giờ VN)
-  workflow_dispatch:   # Cho phép kích hoạt chạy thủ công từ giao diện GitHub
+  workflow_dispatch:   # Cho phép bấm chạy thủ công từ giao diện GitHub
 
 jobs:
   run-ycbg-bot:
@@ -22,24 +22,30 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const runs = await github.rest.actions.listWorkflowRuns({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: context.workflow_id,
-              event: 'schedule',
-              status: 'success',
-              per_page: 5
-            });
-            
-            let lastScheduledRunTime = '';
-            if (context.eventName === 'schedule' && runs.data.workflow_runs.length > 1) {
-              lastScheduledRunTime = runs.data.workflow_runs[1].created_at;
-            } else if (context.eventName === 'workflow_dispatch' && runs.data.workflow_runs.length > 0) {
-              lastScheduledRunTime = runs.data.workflow_runs[0].created_at;
+            try {
+              const runs = await github.rest.actions.listWorkflowRunsForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                event: 'schedule',
+                status: 'success',
+                per_page: 5
+              });
+              
+              let lastScheduledRunTime = '';
+              const scheduledRuns = runs.data.workflow_runs || [];
+              
+              if (context.eventName === 'schedule' && scheduledRuns.length > 1) {
+                lastScheduledRunTime = scheduledRuns[1].created_at;
+              } else if (scheduledRuns.length > 0) {
+                lastScheduledRunTime = scheduledRuns[0].created_at;
+              }
+              
+              core.setOutput('last_run_timestamp', lastScheduledRunTime);
+              console.log(`Mốc thời gian chạy tự động gần nhất: ${lastScheduledRunTime}`);
+            } catch (error) {
+              console.log(`Lỗi khi lấy timestamp: ${error.message}. Sẽ lấy mặc định 24h trước.`);
+              core.setOutput('last_run_timestamp', '');
             }
-            
-            core.setOutput('last_run_timestamp', lastScheduledRunTime);
-            console.log(`Mốc thời gian chạy tự động gần nhất: ${lastScheduledRunTime}`);
 
       - name: Install Dependencies
         run: |
