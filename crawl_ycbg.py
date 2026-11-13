@@ -11,9 +11,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 
-# ==============================================================================
 # 1. CẤU HÌNH BIẾN MÔI TRƯỜNG & DANH SÁCH 19 TỪ KHÓA Y TẾ
-# ==============================================================================
 RAW_GEMINI_KEYS = os.environ.get("GEMINI_API_KEY", "").strip()
 GEMINI_API_KEYS = [k.strip() for k in RAW_GEMINI_KEYS.split(",") if k.strip()]
 current_key_index = 0
@@ -37,9 +35,7 @@ BROAD_QUERIES = [
     "thiết bị y tế", "y tế", "bệnh viện", "báo giá", "vật tư y tế"
 ]
 
-# ==============================================================================
-# 2. DANH SÁCH 14 TỈNH / THÀNH PHỐ MỤC TIÊU (BAO GỒM TÊN TỈNH CŨ/MỚI & VIẾT TẮT)
-# ==============================================================================
+# 2. DANH SÁCH 14 TỈNH / THÀNH PHỐ MỤC TIÊU
 TARGET_LOCATIONS = [
     "Thành phố Đà Nẵng", "Tỉnh Quảng Ngãi", "Tỉnh Đắc Lắc", "Tỉnh Đắk Lắk", "Tỉnh Gia Lai", 
     "Tỉnh Khánh Hòa", "Tỉnh Lâm Đồng", "Thành phố Hồ Chí Minh", "Thành phố Đồng Nai", 
@@ -47,29 +43,12 @@ TARGET_LOCATIONS = [
     "Thành phố Cần Thơ", "Tỉnh Cà Mau"
 ]
 
-LOCATION_ALIASES = {
-    "Thành phố Đà Nẵng": ["đà nẵng", "quảng nam", "tam kỳ", "hội an"],
-    "Tỉnh Quảng Ngãi": ["quảng ngãi", "kon tum"],
-    "Tỉnh Đắk Lắk": ["đắk lắk", "đắc lắc", "tây nguyên", "buôn ma thuột", "phú yên", "tuy hòa"],
-    "Tỉnh Gia Lai": ["gia lai", "pleiku", "bình định", "quy nhơn"],
-    "Tỉnh Khánh Hòa": ["khánh hòa", "nha trang", "ninh thuận", "phan rang"],
-    "Tỉnh Lâm Đồng": ["lâm đồng", "đà lạt", "bảo lộc", "đắk nông", "bình thuận", "phan thiết"],
-    "Thành phố Hồ Chí Minh": ["hồ chí minh", "tp.hcm", "tphcm", "tp hcm", "sài gòn", "thủ đức", "bình dương", "bà rịa", "vũng tàu"],
-    "Thành phố Đồng Nai": ["đồng nai", "biên hòa", "long khánh", "bình phước", "đồng xoài"],
-    "Tỉnh Tây Ninh": ["tây ninh", "long an", "tân an"],
-    "Tỉnh Đồng Tháp": ["đồng tháp", "cao lãnh", "sa đéc", "tiền giang", "mỹ tho"],
-    "Tỉnh Vĩnh Long": ["vĩnh long", "bến tre", "trà vinh"],
-    "Tỉnh An Giang": ["an giang", "long xuyên", "châu đốc", "kiên giang", "rạch giá", "phú quốc"],
-    "Thành phố Cần Thơ": ["cần thơ", "hậu giang", "sóc trăng"],
-    "Tỉnh Cà Mau": ["cà mau", "bạc liêu"]
-}
-
 TZ_VN = timezone(timedelta(hours=7))
 NOW_VN = datetime.now(TZ_VN)
 TODAY_STR = NOW_VN.strftime("%H:%M %d/%m/%Y")
 
-# Tính toán mốc START_TIME từ lần chạy tự động (schedule) thành công gần nhất
-# Lùi thêm 10 phút đệm an toàn để bù độ trễ khởi động runner của GitHub Actions
+# Tính toán mốc START_TIME dựa trên lần chạy tự động (schedule) thành công gần nhất
+# Lùi thêm 10 phút đệm an toàn để bù trừ độ trễ khởi động runner của GitHub Actions
 if LAST_RUN_ENV:
     try:
         parsed_last_run = datetime.fromisoformat(LAST_RUN_ENV.replace("Z", "+00:00")).astimezone(TZ_VN)
@@ -83,16 +62,14 @@ BASE_DOMAIN = "muasamcong.mof.gov.vn"
 PRIMARY_MODEL = "gemini-3.8-flash"
 FALLBACK_MODEL = "gemini-3.8-flash-lite"
 
-# Server Mua sắm công giới hạn cứng pageSize tối đa 50 bản ghi/trang:
-# - Từ khóa sản phẩm cụ thể: tối đa 150 bản ghi (3 trang x 50)
-# - Từ khóa chung để bóc tách chi tiết hàng hóa: tối đa 500 bản ghi (10 trang x 50)
+# Phân tầng giới hạn bản ghi quét (Server trả về tối đa 50 bản ghi/trang):
+# - 19 từ khóa sản phẩm cụ thể: tối đa 150 bản ghi (3 trang x 50)
+# - 5 từ khóa chung mở rộng: tối đa 500 bản ghi (10 trang x 50)
 SERVER_MAX_PAGE_SIZE = 50
 SPECIFIC_MAX_RECORDS = 150
 BROAD_MAX_RECORDS = 500
 
-# ==============================================================================
 # 3. KHỞI TẠO CHROME HEADLESS
-# ==============================================================================
 def init_driver():
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
@@ -100,15 +77,12 @@ def init_driver():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
     
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
     return driver
 
-# ==============================================================================
-# 4. LỌC THỜI GIAN ĐĂNG TRONG KHOẢNG [START_TIME -> NOW_VN] (Chuẩn giờ VN UTC+7)
-# ==============================================================================
+# 4. LỌC THỜI GIAN ĐĂNG TRONG KHOẢNG [START_TIME -> NOW_VN]
 def is_published_in_time_window(item):
     pub_date_str = item.get("publicDate") or item.get("originalPublicDate") or ""
     if not pub_date_str:
@@ -116,14 +90,12 @@ def is_published_in_time_window(item):
     
     try:
         clean_date_str = pub_date_str.split(".")[0].replace("Z", "")
-        dt_obj = datetime.strptime(clean_date_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=TZ_VN)
+        dt_obj = datetime.strptime(clean_date_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).astimezone(TZ_VN)
         return START_TIME <= dt_obj <= NOW_VN
     except Exception:
         return True
 
-# ==============================================================================
 # 5. ĐỊNH DẠNG HẠN NỘP BÁO GIÁ DỄ ĐỌC
-# ==============================================================================
 def format_date_str(date_str):
     if not date_str:
         return "Chưa xác định"
@@ -134,14 +106,12 @@ def format_date_str(date_str):
     except Exception:
         return str(date_str)
 
-# ==============================================================================
 # 6. KIỂM TRA & CHUẨN HÓA ĐỊA PHƯƠNG
-# ==============================================================================
 def check_location(item, raw_str):
     found_locs = []
     investor = str(item.get("investorName") or item.get("procuringEntityName") or "").lower()
     title = str(item.get("name") or item.get("pname") or "").lower()
-    search_text = f"{investor} {title} {raw_str}".lower()
+    search_text = f"{investor} {title} {raw_str}"
 
     locations_arr = item.get("locations", [])
     if isinstance(locations_arr, list):
@@ -151,15 +121,20 @@ def check_location(item, raw_str):
                 dist_name = loc.get("districtName", "")
                 search_text += f" {prov_name} {dist_name}".lower()
 
-    for canonical_name, aliases in LOCATION_ALIASES.items():
-        if any(alias in search_text for alias in aliases):
-            found_locs.append(canonical_name)
+    if "đắk lắk" in search_text or "đắc lắc" in search_text or "tây nguyên" in search_text or "buôn ma thuột" in search_text:
+        found_locs.append("Tỉnh Đắk Lắk")
+
+    for target in TARGET_LOCATIONS:
+        clean_kw = target.replace("Thành phố ", "").replace("Tỉnh ", "").lower()
+        if clean_kw in search_text:
+            if clean_kw == "đồng nai":
+                found_locs.append("Thành phố Đồng Nai")
+            elif clean_kw not in ["đắk lắk", "đắc lắc"]:
+                found_locs.append(target)
 
     return list(set(found_locs))
 
-# ==============================================================================
-# 7. DEEP-SCAN LẤY CHI TIẾT DANH MỤC HÀNG HÓA YCBG (GIỮ NGUYÊN ENDPOINT CHUẨN)
-# ==============================================================================
+# 7. DEEP-SCAN LẤY CHI TIẾT DANH MỤC HÀNG HÓA YCBG
 def get_yccg_form_values(driver, yc_id):
     js_get_yccg = """
     var callback = arguments[arguments.length - 1];
@@ -181,15 +156,13 @@ def get_yccg_form_values(driver, yc_id):
     """
     try:
         res = driver.execute_async_script(js_get_yccg, yc_id)
-        if isinstance(res, dict) and not res.get("error"):
+        if isinstance(res, dict):
             return json.dumps(res, ensure_ascii=False).lower()
     except Exception:
         pass
     return ""
 
-# ==============================================================================
 # 8. TẠO URL CHI TIẾT YCBG CHUẨN V2
-# ==============================================================================
 def build_yccg_detail_url(item, code, yc_id, bid_form):
     url = (
         f"https://{BASE_DOMAIN}/web/guest/contractor-selection?"
@@ -205,14 +178,10 @@ def build_yccg_detail_url(item, code, yc_id, bid_form):
     )
     return url
 
-# ==============================================================================
 # 9. TRÍCH XUẤT DỮ LIỆU YCBG THEO KHUNG THỜI GIAN PHÂN TẦNG
-# ==============================================================================
 def fetch_yccg_today(driver):
-    mode_label = f"Chế độ chạy: {EVENT_NAME_ENV or 'local'} | LAST_RUN_ENV: {LAST_RUN_ENV or 'Mặc định 24h'}"
-    print(f"-> {mode_label}")
-    print(f"-> Kết nối Session Mua Sắm Công YCBG (Khung quét: {START_TIME.strftime('%H:%M %d/%m/%Y')} -> {TODAY_STR})...")
-    
+    print(f"-> Chế độ chạy: {EVENT_NAME_ENV or 'local'} | Mốc lịch sử gốc: {LAST_RUN_ENV or 'Mặc định 24h'}")
+    print(f"-> Kết nối Session Mua Sắm Công YCBG (Khung quét có đệm: {START_TIME.strftime('%H:%M %d/%m/%Y')} -> {TODAY_STR})...")
     driver.get(f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index")
     time.sleep(10)
 
@@ -231,21 +200,11 @@ def fetch_yccg_today(driver):
     return token;
     """
     token_val = driver.execute_script(js_get_token)
-    
-    # Nếu chưa bắt được token sau 10s, cuộn trang và chờ thêm để Angular gọi API khởi tạo
-    if not token_val:
-        driver.execute_script("window.scrollTo(0, 500);")
-        time.sleep(6)
-        token_val = driver.execute_script(js_get_token)
-
     if token_val:
         print(f"-> Token YCBG trích xuất từ Session: {token_val[:20]}...")
-    else:
-        print("-> [CẢNH BÁO] Chưa bắt được token từ resource log, sẽ gửi trực tiếp kèm session cookie.")
 
     unique_matches = {}
     scanned_codes = set()
-    logged_debug_once = False
 
     js_fetch_search_yccg = """
     var callback = arguments[arguments.length - 1];
@@ -279,14 +238,8 @@ def fetch_yccg_today(driver):
             }]
         }])
     })
-    .then(async response => {
-        const text = await response.text();
-        try {
-            callback({ status: response.status, body: JSON.parse(text) });
-        } catch (e) {
-            callback({ status: response.status, rawText: text.substring(0, 300) });
-        }
-    })
+    .then(response => response.json())
+    .then(data => callback(data))
     .catch(err => callback({ error: err.toString() }));
     """
 
@@ -297,24 +250,15 @@ def fetch_yccg_today(driver):
         query_plan.append((kw, BROAD_MAX_RECORDS))
 
     for kw, max_records in query_plan:
-        print(f"-> Truy vấn YCBG cho từ khóa: '{kw}' (Giới hạn tối đa {max_records} bản ghi)...")
+        print(f"-> Truy vấn YCBG cho từ khóa: '{kw}' (Tối đa {max_records} bản ghi)...")
         matched_in_kw = 0
-        province_in_kw = 0
         fetched_in_kw = 0
         page_num = 0
 
         while fetched_in_kw < max_records:
             current_page_size = min(SERVER_MAX_PAGE_SIZE, max_records - fetched_in_kw)
             try:
-                raw_res = driver.execute_async_script(
-                    js_fetch_search_yccg,
-                    kw,
-                    page_num,
-                    current_page_size,
-                    token_val
-                )
-
-                res = raw_res.get("body") if isinstance(raw_res, dict) else raw_res
+                res = driver.execute_async_script(js_fetch_search_yccg, kw, page_num, current_page_size, token_val)
                 data_list = []
                 
                 if isinstance(res, list) and len(res) > 0:
@@ -325,9 +269,6 @@ def fetch_yccg_today(driver):
                     data_list = res.get("page", {}).get("content", [])
 
                 if not isinstance(data_list, list) or not data_list:
-                    if not logged_debug_once and page_num == 0:
-                        print(f"    [DEBUG API] HTTP Status: {raw_res.get('status') if isinstance(raw_res, dict) else 'N/A'} | Phản hồi mẫu: {str(raw_res)[:220]}")
-                        logged_debug_once = True
                     break
 
                 fetched_in_kw += len(data_list)
@@ -357,12 +298,6 @@ def fetch_yccg_today(driver):
                     detail_url = build_yccg_detail_url(item, code, yc_id, bid_form)
                     raw_str = json.dumps(item, ensure_ascii=False).lower()
 
-                    matched_province = check_location(item, raw_str)
-                    if not matched_province:
-                        continue
-
-                    province_in_kw += 1
-
                     if yc_id:
                         yccg_detail_str = get_yccg_form_values(driver, yc_id)
                         if yccg_detail_str:
@@ -370,21 +305,24 @@ def fetch_yccg_today(driver):
 
                     matched_kws = [k for k in KEYWORDS if k.lower() in raw_str]
                     if matched_kws:
-                        matched_in_kw += 1
-                        location_detail = "Tiêu đề" if any(k.lower() in f"{code} {title}".lower() for k in matched_kws) else "Chi tiết Hàng hóa Báo giá"
-                        unique_matches[code] = {
-                            "code": code,
-                            "yc_id": yc_id,
-                            "title": title,
-                            "investor": investor,
-                            "bid_close_date": bid_close_date,
-                            "province": ", ".join(matched_province),
-                            "matched_kw": ", ".join(matched_kws),
-                            "location": location_detail,
-                            "detail_url": detail_url,
-                            "snippet": raw_str[:1200]
-                        }
+                        matched_province = check_location(item, raw_str)
+                        if matched_province:
+                            matched_in_kw += 1
+                            location_detail = "Tiêu đề" if any(k.lower() in f"{code} {title}".lower() for k in matched_kws) else "Chi tiết Hàng hóa Báo giá"
+                            unique_matches[code] = {
+                                "code": code,
+                                "yc_id": yc_id,
+                                "title": title,
+                                "investor": investor,
+                                "bid_close_date": bid_close_date,
+                                "province": ", ".join(matched_province),
+                                "matched_kw": ", ".join(matched_kws),
+                                "location": location_detail,
+                                "detail_url": detail_url,
+                                "snippet": raw_str[:1200]
+                            }
 
+                # Dừng phân trang sớm nếu server hết bản ghi hoặc đa số bản ghi đã cũ hơn mốc quét
                 if len(data_list) < current_page_size or older_count > len(data_list) * 0.7:
                     break
 
@@ -394,16 +332,17 @@ def fetch_yccg_today(driver):
                 print(f"[CẢNH BÁO FETCH YCBG] Từ khóa '{kw}' (Trang {page_num}): {e}")
                 break
 
-        print(f"    + Server trả về {fetched_in_kw} YCBG (mới thuộc 14 tỉnh: {province_in_kw}) -> Khớp thêm từ khóa y tế: {matched_in_kw} thông báo.")
-        time.sleep(0.3)
+        print(f"    + Server trả về {fetched_in_kw} YCBG -> Khớp khung thời gian, địa phương & từ khóa: {matched_in_kw} thông báo.")
+        time.sleep(0.5)
 
     return list(unique_matches.values())
 
-# ==============================================================================
-# 10. PHÂN TÍCH YCBG VỚI GEMINI AI (CHIA LÔ + RETRY 503 + FALLBACK GEMINI 3)
-# ==============================================================================
-def analyze_batch_with_gemini(batch_items):
+# 10. PHÂN TÍCH YCBG VỚI GEMINI AI (TỰ ĐỔI API KEY HOẶC CHUYỂN MODEL DỰ PHÒNG NẾU QUÁ TẢI)
+def analyze_with_gemini(candidates):
     global current_key_index, GEMINI_API_KEYS
+    if not candidates or not GEMINI_API_KEYS:
+        return candidates
+
     from google import genai
     from google.genai import types
 
@@ -419,7 +358,7 @@ Yêu cầu:
 3. Trả về đúng mảng JSON chứa các object đầy đủ thuộc tính và thêm "reason".
 
 Danh sách:
-{json.dumps(batch_items, ensure_ascii=False, indent=2)}
+{json.dumps(candidates, ensure_ascii=False, indent=2)}
 Chỉ trả về chuỗi JSON thuần túy (không kèm markdown).
 """
 
@@ -464,30 +403,9 @@ Chỉ trả về chuỗi JSON thuần túy (không kèm markdown).
                     key_idx = len(GEMINI_API_KEYS)
                     break
 
-    return batch_items
+    return candidates
 
-
-def analyze_with_gemini(candidates):
-    if not candidates or not GEMINI_API_KEYS:
-        return candidates
-
-    batch_size = 15
-    analyzed_results = []
-    for i in range(0, len(candidates), batch_size):
-        batch = candidates[i:i + batch_size]
-        print(f"🧠 Đang phân tích AI lô {i // batch_size + 1} ({len(batch)} YCBG)...")
-        analyzed_batch = analyze_batch_with_gemini(batch)
-        if isinstance(analyzed_batch, list) and len(analyzed_batch) == len(batch):
-            analyzed_results.extend(analyzed_batch)
-        else:
-            analyzed_results.extend(batch)
-        time.sleep(1)
-
-    return analyzed_results
-
-# ==============================================================================
 # 11. GỬI EMAIL BÁO CÁO YCBG
-# ==============================================================================
 def send_email_report(matched_list):
     if not RECEIVER_EMAIL:
         print("[LỖI CẤU HÌNH] Chưa khai báo email nhận.")
@@ -572,7 +490,6 @@ def send_email_report(matched_list):
         except Exception as e:
             print(f"[LỖI GỬI EMAIL SMTP] {e}")
 
-
 def main():
     print(f"=== CRAWL & DEEP-SCAN YCBG (Khung quét: {START_TIME.strftime('%H:%M %d/%m/%Y')} -> {TODAY_STR}) ===")
     driver = init_driver()
@@ -582,7 +499,6 @@ def main():
         send_email_report(final_matches)
     finally:
         driver.quit()
-
 
 if __name__ == "__main__":
     main()
