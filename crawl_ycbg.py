@@ -47,7 +47,7 @@ TZ_VN = timezone(timedelta(hours=7))
 NOW_VN = datetime.now(TZ_VN)
 TODAY_STR = NOW_VN.strftime("%H:%M %d/%m/%Y")
 
-# Tính toán mốc START_TIME dựa trên lần chạy tự động (schedule) thành công gần nhất
+# Tính toán mốc START_TIME dựa trên lịch chạy tự động (schedule) thành công gần nhất
 # Lùi thêm 10 phút đệm an toàn để bù trừ độ trễ khởi động runner của GitHub Actions
 if LAST_RUN_ENV:
     try:
@@ -77,6 +77,7 @@ def init_driver():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
     
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
@@ -178,13 +179,8 @@ def build_yccg_detail_url(item, code, yc_id, bid_form):
     )
     return url
 
-# 9. TRÍCH XUẤT DỮ LIỆU YCBG THEO KHUNG THỜI GIAN PHÂN TẦNG
-def fetch_yccg_today(driver):
-    print(f"-> Chế độ chạy: {EVENT_NAME_ENV or 'local'} | Mốc lịch sử gốc: {LAST_RUN_ENV or 'Mặc định 24h'}")
-    print(f"-> Kết nối Session Mua Sắm Công YCBG (Khung quét có đệm: {START_TIME.strftime('%H:%M %d/%m/%Y')} -> {TODAY_STR})...")
-    driver.get(f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index")
-    time.sleep(10)
-
+# 9. TRÍCH XUẤT TOKEN TỪ SESSION TRÌNH DUYỆT (CHỜ TỐI ĐA 25S)
+def extract_session_token(driver):
     js_get_token = """
     let token = '';
     let entries = window.performance.getEntriesByType('resource');
@@ -199,12 +195,29 @@ def fetch_yccg_today(driver):
     }
     return token;
     """
-    token_val = driver.execute_script(js_get_token)
+    for attempt in range(5):
+        token_val = driver.execute_script(js_get_token)
+        if token_val:
+            return token_val
+        time.sleep(3)
+    return ""
+
+# 10. TRÍCH XUẤT DỮ LIỆU YCBG THEO KHUNG THỜI GIAN PHÂN TẦNG
+def fetch_yccg_today(driver):
+    print(f"-> Chế độ chạy: {EVENT_NAME_ENV or 'local'} | Mốc lịch sử gốc: {LAST_RUN_ENV or 'Mặc định 24h'}")
+    print(f"-> Kết nối Session Mua Sắm Công YCBG (Khung quét có đệm: {START_TIME.strftime('%H:%M %d/%m/%Y')} -> {TODAY_STR})...")
+    driver.get(f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index")
+    time.sleep(8)
+
+    token_val = extract_session_token(driver)
     if token_val:
         print(f"-> Token YCBG trích xuất từ Session: {token_val[:20]}...")
+    else:
+        print(f"-> [CẢNH BÁO SESSION] Chưa trích xuất được token (Page Title: '{driver.title}'). Thử gọi trực tiếp...")
 
     unique_matches = {}
     scanned_codes = set()
+    debug_logged = False
 
     js_fetch_search_yccg = """
     var callback = arguments[arguments.length - 1];
@@ -217,6 +230,20 @@ def fetch_yccg_today(driver):
     if (token) {
         url += '?token=' + token;
     }
+
+    const payloadObj = [{
+        pageSize: pageSize,
+        pageNumber: String(pageNum),
+        query: [{
+            index: "es-contractor-selection",
+            keyWord: kw,
+            matchType: "all-1",
+            matchFields: ["notifyNo", "name"],
+            filters: [
+                { fieldName: "type", searchType: "in", fieldValues: ["es-ycbg"] }
+            ]
+        }]
+    }];
     
     fetch(url, {
         method: 'POST',
@@ -224,23 +251,27 @@ def fetch_yccg_today(driver):
             'Content-Type': 'application/json',
             'Accept': 'application/json, text/plain, */*'
         },
-        body: JSON.stringify([{
-            pageSize: pageSize,
-            pageNumber: String(pageNum),
-            query: [{
-                index: "es-contractor-selection",
-                keyWord: kw,
-                matchType: "all-1",
-                matchFields: ["notifyNo", "name"],
-                filters: [
-                    { fieldName: "type", searchType: "in", fieldValues: ["es-ycbg"] }
-                ]
-            }]
-        }])
+        body: JSON.stringify(payloadObj)
     })
-    .then(response => response.json())
-    .then(data => callback(data))
-    .catch(err => callback({ error: err.toString() }));
+    .then(async response => {
+        const rawText = await response.text();
+        try {
+            callback({
+                status: response.status,
+                url: url,
+                payload: payloadObj,
+                body: JSON.parse(rawText)
+            });
+        } catch (e) {
+            callback({
+                status: response.status,
+                url: url,
+                payload: payloadObj,
+                rawText: rawText.substring(0, 400)
+            });
+        }
+    })
+    .catch(err => callback({ error: err.toString(), url: url, payload: payloadObj }));
     """
 
     query_plan = []
@@ -258,17 +289,30 @@ def fetch_yccg_today(driver):
         while fetched_in_kw < max_records:
             current_page_size = min(SERVER_MAX_PAGE_SIZE, max_records - fetched_in_kw)
             try:
-                res = driver.execute_async_script(js_fetch_search_yccg, kw, page_num, current_page_size, token_val)
+                raw_res = driver.execute_async_script(js_fetch_search_yccg, kw, page_num, current_page_size, token_val)
+                res = raw_res.get("body") if isinstance(raw_res, dict) else raw_res
                 data_list = []
+                total_elements = 0
                 
                 if isinstance(res, list) and len(res) > 0:
                     first_item = res[0]
                     if isinstance(first_item, dict):
-                        data_list = first_item.get("page", {}).get("content", [])
+                        page_obj = first_item.get("page", {})
+                        data_list = page_obj.get("content", [])
+                        total_elements = page_obj.get("totalElements", len(data_list))
                 elif isinstance(res, dict):
-                    data_list = res.get("page", {}).get("content", [])
+                    page_obj = res.get("page", {})
+                    data_list = page_obj.get("content", [])
+                    total_elements = page_obj.get("totalElements", len(data_list))
 
                 if not isinstance(data_list, list) or not data_list:
+                    if not debug_logged and page_num == 0:
+                        status_code = raw_res.get("status") if isinstance(raw_res, dict) else "N/A"
+                        req_url = raw_res.get("url") if isinstance(raw_res, dict) else "N/A"
+                        sample_resp = str(raw_res.get("body") or raw_res.get("rawText") or raw_res)[:350]
+                        print(f"    [XÁC NHẬN PAYLOAD & RESPONSE] HTTP={status_code} | URL={req_url}")
+                        print(f"    [RESPONSE THÔ TỪ SERVER]: {sample_resp}")
+                        debug_logged = True
                     break
 
                 fetched_in_kw += len(data_list)
@@ -322,7 +366,6 @@ def fetch_yccg_today(driver):
                                 "snippet": raw_str[:1200]
                             }
 
-                # Dừng phân trang sớm nếu server hết bản ghi hoặc đa số bản ghi đã cũ hơn mốc quét
                 if len(data_list) < current_page_size or older_count > len(data_list) * 0.7:
                     break
 
@@ -337,7 +380,7 @@ def fetch_yccg_today(driver):
 
     return list(unique_matches.values())
 
-# 10. PHÂN TÍCH YCBG VỚI GEMINI AI (TỰ ĐỔI API KEY HOẶC CHUYỂN MODEL DỰ PHÒNG NẾU QUÁ TẢI)
+# 11. PHÂN TÍCH YCBG VỚI GEMINI AI (TỰ ĐỔI API KEY HOẶC CHUYỂN MODEL DỰ PHÒNG NẾU QUÁ TẢI)
 def analyze_with_gemini(candidates):
     global current_key_index, GEMINI_API_KEYS
     if not candidates or not GEMINI_API_KEYS:
@@ -405,7 +448,7 @@ Chỉ trả về chuỗi JSON thuần túy (không kèm markdown).
 
     return candidates
 
-# 11. GỬI EMAIL BÁO CÁO YCBG
+# 12. GỬI EMAIL BÁO CÁO YCBG
 def send_email_report(matched_list):
     if not RECEIVER_EMAIL:
         print("[LỖI CẤU HÌNH] Chưa khai báo email nhận.")
