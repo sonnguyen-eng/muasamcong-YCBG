@@ -30,7 +30,12 @@ KEYWORDS = [
     "Bồn oxy lỏng", "Oxy trung tâm"
 ]
 
-# 2. DANH SÁCH 14 TỈNH / THÀNH PHỐ MỤC TIÊU (BAO GỒM TÊN CŨ/MỚI & VIẾT TẮT)
+BROAD_QUERIES = [
+    "thiết bị y tế", "trang thiết bị y tế", "y tế", 
+    "bệnh viện", "báo giá", "vật tư y tế"
+]
+
+# 2. DANH SÁCH 14 TỈNH / THÀNH PHỐ MỤC TIÊU
 TARGET_LOCATIONS = [
     "Thành phố Đà Nẵng", "Tỉnh Quảng Ngãi", "Tỉnh Đắc Lắc", "Tỉnh Đắk Lắk", "Tỉnh Gia Lai", 
     "Tỉnh Khánh Hòa", "Tỉnh Lâm Đồng", "Thành phố Hồ Chí Minh", "Thành phố Đồng Nai", 
@@ -59,7 +64,6 @@ TZ_VN = timezone(timedelta(hours=7))
 NOW_VN = datetime.now(TZ_VN)
 TODAY_STR = NOW_VN.strftime("%H:%M %d/%m/%Y")
 
-# Tính toán mốc START_TIME dựa trên lịch chạy tự động trước đó
 if LAST_RUN_ENV:
     try:
         START_TIME = datetime.fromisoformat(LAST_RUN_ENV.replace("Z", "+00:00")).astimezone(TZ_VN)
@@ -72,9 +76,11 @@ BASE_DOMAIN = "muasamcong.mof.gov.vn"
 PRIMARY_MODEL = "gemini-3.8-flash"
 FALLBACK_MODEL = "gemini-2.5-flash"
 
-# Thông số tối ưu: Quét 5 trang x 100 bản ghi = 500 bản ghi tối đa mỗi từ khóa
-PAGE_SIZE = 100
-MAX_PAGES_PER_QUERY = 5
+# Phân tầng giới hạn quét:
+# - Từ khóa sản phẩm cụ thể: tối đa 150 bản ghi (Trang 0: 100, Trang 1: 50)
+# - Từ khóa chung để bóc tách biểu mẫu chi tiết: tối đa 500 bản ghi (5 trang x 100)
+SPECIFIC_MAX_RECORDS = 150
+BROAD_MAX_RECORDS = 500
 
 # 3. KHỞI TẠO CHROME HEADLESS
 def init_driver():
@@ -89,12 +95,11 @@ def init_driver():
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
     return driver
 
-# 4. LỌC THỜI GIAN ĐĂNG TRONG KHOẢNG [START_TIME -> NOW_VN] (Chuẩn giờ VN UTC+7)
+# 4. LỌC THỜI GIAN ĐĂNG TRONG KHOẢNG [START_TIME -> NOW_VN]
 def is_published_in_time_window(item):
     pub_date_str = item.get("publicDate") or item.get("originalPublicDate") or ""
     if not pub_date_str:
         return True
-    
     try:
         clean_date_str = pub_date_str.split(".")[0].replace("Z", "")
         dt_obj = datetime.strptime(clean_date_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=TZ_VN)
@@ -184,7 +189,7 @@ def build_yccg_detail_url(item, code, yc_id, bid_form):
     )
     return url
 
-# 9. TRÍCH XUẤT DỮ LIỆU YCBG THEO KHUNG THỜI GIAN (TỐI ĐA 500 BẢN GHI/TỪ KHÓA)
+# 9. TRÍCH XUẤT DỮ LIỆU YCBG THEO KHUNG THỜI GIAN
 def fetch_yccg_today(driver):
     print(f"-> Kết nối Session Mua Sắm Công YCBG (Khung quét: {START_TIME.strftime('%H:%M %d/%m/%Y')} -> {TODAY_STR})...")
     driver.get(f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index")
@@ -254,20 +259,22 @@ def fetch_yccg_today(driver):
     .catch(err => callback({ error: err.toString() }));
     """
 
-    search_queries = KEYWORDS + ["thiết bị y tế", "trang thiết bị y tế", "y tế", "bệnh viện", "báo giá", "vật tư y tế"]
+    query_plan = [(kw, SPECIFIC_MAX_RECORDS) for kw in KEYWORDS] + [(kw, BROAD_MAX_RECORDS) for kw in BROAD_QUERIES]
 
-    for kw in search_queries:
-        print(f"-> Truy vấn YCBG cho từ khóa: '{kw}'...")
+    for kw, max_records in query_plan:
+        print(f"-> Truy vấn YCBG cho từ khóa: '{kw}' (Giới hạn tối đa {max_records} bản ghi)...")
         matched_in_kw = 0
         fetched_in_kw = 0
+        page_num = 0
 
-        for page_num in range(MAX_PAGES_PER_QUERY):
+        while fetched_in_kw < max_records:
+            current_page_size = min(100, max_records - fetched_in_kw)
             try:
                 res = driver.execute_async_script(
                     js_fetch_search_yccg,
                     kw,
                     page_num,
-                    PAGE_SIZE,
+                    current_page_size,
                     from_date_iso,
                     to_date_iso,
                     token_val
@@ -311,7 +318,6 @@ def fetch_yccg_today(driver):
                     detail_url = build_yccg_detail_url(item, code, yc_id, bid_form)
                     raw_str = json.dumps(item, ensure_ascii=False).lower()
 
-                    # Kiểm tra địa phương trước để chỉ Deep-Scan danh mục báo giá cho các YCBG thuộc 14 tỉnh
                     matched_province = check_location(item, raw_str)
                     if not matched_province:
                         continue
@@ -338,10 +344,10 @@ def fetch_yccg_today(driver):
                             "snippet": raw_str[:1200]
                         }
 
-                # Tự động dừng phân trang nếu trang chưa đầy hoặc đa số bản ghi đã cũ hơn 24h
-                if len(data_list) < PAGE_SIZE or older_count > len(data_list) * 0.7:
+                if len(data_list) < current_page_size or older_count > len(data_list) * 0.7:
                     break
 
+                page_num += 1
                 time.sleep(0.4)
             except Exception as e:
                 print(f"[CẢNH BÁO FETCH YCBG] Từ khóa '{kw}' (Trang {page_num}): {e}")
