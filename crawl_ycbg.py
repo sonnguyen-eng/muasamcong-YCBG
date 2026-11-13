@@ -35,7 +35,7 @@ BROAD_QUERIES = [
     "bệnh viện", "báo giá", "vật tư y tế"
 ]
 
-# 2. DANH SÁCH 14 TỈNH / THÀNH PHỐ MỤC TIÊU
+# 2. DANH SÁCH 14 TỈNH / THÀNH PHỐ MỤC TIÊU (BAO GỒM TÊN CŨ/MỚI & VIẾT TẮT)
 TARGET_LOCATIONS = [
     "Thành phố Đà Nẵng", "Tỉnh Quảng Ngãi", "Tỉnh Đắc Lắc", "Tỉnh Đắk Lắk", "Tỉnh Gia Lai", 
     "Tỉnh Khánh Hòa", "Tỉnh Lâm Đồng", "Thành phố Hồ Chí Minh", "Thành phố Đồng Nai", 
@@ -74,7 +74,7 @@ else:
 
 BASE_DOMAIN = "muasamcong.mof.gov.vn"
 PRIMARY_MODEL = "gemini-3.8-flash"
-FALLBACK_MODEL = "gemini-2.5-flash"
+FALLBACK_MODEL = "gemini-3.8-flash-lite"
 
 # Phân tầng giới hạn quét:
 # - Từ khóa sản phẩm cụ thể: tối đa 150 bản ghi (Trang 0: 100, Trang 1: 50)
@@ -189,7 +189,7 @@ def build_yccg_detail_url(item, code, yc_id, bid_form):
     )
     return url
 
-# 9. TRÍCH XUẤT DỮ LIỆU YCBG THEO KHUNG THỜI GIAN
+# 9. TRÍCH XUẤT DỮ LIỆU YCBG THEO KHUNG THỜI GIAN PHÂN TẦNG
 def fetch_yccg_today(driver):
     print(f"-> Kết nối Session Mua Sắm Công YCBG (Khung quét: {START_TIME.strftime('%H:%M %d/%m/%Y')} -> {TODAY_STR})...")
     driver.get(f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index")
@@ -259,7 +259,11 @@ def fetch_yccg_today(driver):
     .catch(err => callback({ error: err.toString() }));
     """
 
-    query_plan = [(kw, SPECIFIC_MAX_RECORDS) for kw in KEYWORDS] + [(kw, BROAD_MAX_RECORDS) for kw in BROAD_QUERIES]
+    query_plan = []
+    for kw in KEYWORDS:
+        query_plan.append((kw, SPECIFIC_MAX_RECORDS))
+    for kw in BROAD_QUERIES:
+        query_plan.append((kw, BROAD_MAX_RECORDS))
 
     for kw, max_records in query_plan:
         print(f"-> Truy vấn YCBG cho từ khóa: '{kw}' (Giới hạn tối đa {max_records} bản ghi)...")
@@ -358,13 +362,13 @@ def fetch_yccg_today(driver):
 
     return list(unique_matches.values())
 
-# 10. PHÂN TÍCH YCBG VỚI GEMINI AI (CHIA LÔ + RETRY 503 + FALLBACK MODEL + XOAY KEY)
+# 10. PHÂN TÍCH YCBG VỚI GEMINI AI (CHIA LÔ + RETRY 503 + FALLBACK GEMINI 3 + XOAY KEY)
 def analyze_batch_with_gemini(batch_items):
     global current_key_index, GEMINI_API_KEYS
     from google import genai
     from google.genai import types
 
-    models_to_try = [PRIMARY_MODEL, FALLBACK_MODEL]
+    models_to_try = [PRIMARY_MODEL, FALLBACK_MODEL, "gemini-3.8-pro"]
 
     prompt = f"""
 Bạn là chuyên gia phân tích dữ liệu Báo giá Trang thiết bị Y tế.
@@ -381,11 +385,12 @@ Chỉ trả về chuỗi JSON thuần túy (không kèm markdown).
 """
 
     for model_name in models_to_try:
-        while current_key_index < len(GEMINI_API_KEYS):
-            key = GEMINI_API_KEYS[current_key_index]
+        key_idx = current_key_index
+        while key_idx < len(GEMINI_API_KEYS):
+            key = GEMINI_API_KEYS[key_idx]
             client = genai.Client(api_key=key)
 
-            for attempt in range(3):
+            for attempt in range(2):
                 try:
                     response = client.models.generate_content(
                         model=model_name,
@@ -393,27 +398,32 @@ Chỉ trả về chuỗi JSON thuần túy (không kèm markdown).
                         config=types.GenerateContentConfig(response_mime_type="application/json")
                     )
                     if response and response.text:
+                        current_key_index = key_idx
                         return json.loads(response.text.strip())
                 except Exception as e:
                     error_msg = str(e)
                     print(f"[CẢNH BÁO AI GOOGLE-GENAI ({model_name})] {error_msg}")
 
+                    if "404" in error_msg or "not_found" in error_msg.lower():
+                        key_idx = len(GEMINI_API_KEYS)
+                        break
+
                     if any(k in error_msg.lower() for k in ["429", "resource_exhausted", "quota"]):
-                        if current_key_index + 1 < len(GEMINI_API_KEYS):
-                            current_key_index += 1
-                            print(f"🔄 Đã đổi sang Gemini API Key thứ [{current_key_index + 1}/{len(GEMINI_API_KEYS)}]")
-                            break
-                        return batch_items
+                        key_idx += 1
+                        if key_idx < len(GEMINI_API_KEYS):
+                            print(f"🔄 Đã đổi sang Gemini API Key thứ [{key_idx + 1}/{len(GEMINI_API_KEYS)}]")
+                        break
 
                     if "503" in error_msg or "unavailable" in error_msg.lower():
-                        wait_s = 12 * (attempt + 1)
-                        print(f"⏳ Model {model_name} đang quá tải, thử lại sau {wait_s}s...")
-                        time.sleep(wait_s)
-                        continue
+                        if attempt == 0:
+                            print(f"⏳ Model {model_name} đang quá tải, thử lại sau 10s...")
+                            time.sleep(10)
+                            continue
+                        key_idx = len(GEMINI_API_KEYS)
+                        break
 
+                    key_idx = len(GEMINI_API_KEYS)
                     break
-            else:
-                break
 
     return batch_items
 
