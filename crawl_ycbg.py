@@ -23,6 +23,7 @@ SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD", "").strip()
 RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL", "").strip() or SENDER_EMAIL
 
 LAST_RUN_ENV = os.environ.get("LAST_RUN_TIMESTAMP", "").strip()
+EVENT_NAME_ENV = os.environ.get("GITHUB_EVENT_NAME", "").strip()
 
 KEYWORDS = [
     "nội soi", "Bàn mổ", "đèn mổ", "hệ thống khí y tế", "vận chuyển mẫu", 
@@ -67,10 +68,12 @@ TZ_VN = timezone(timedelta(hours=7))
 NOW_VN = datetime.now(TZ_VN)
 TODAY_STR = NOW_VN.strftime("%H:%M %d/%m/%Y")
 
-# Tính toán mốc START_TIME dựa trên lịch chạy tự động trước đó
+# Tính toán mốc START_TIME từ lần chạy tự động (schedule) thành công gần nhất
+# Lùi thêm 10 phút đệm an toàn để bù độ trễ khởi động runner của GitHub Actions
 if LAST_RUN_ENV:
     try:
-        START_TIME = datetime.fromisoformat(LAST_RUN_ENV.replace("Z", "+00:00")).astimezone(TZ_VN)
+        parsed_last_run = datetime.fromisoformat(LAST_RUN_ENV.replace("Z", "+00:00")).astimezone(TZ_VN)
+        START_TIME = parsed_last_run - timedelta(minutes=10)
     except Exception:
         START_TIME = NOW_VN - timedelta(hours=24)
 else:
@@ -97,6 +100,7 @@ def init_driver():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
     
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
@@ -205,7 +209,10 @@ def build_yccg_detail_url(item, code, yc_id, bid_form):
 # 9. TRÍCH XUẤT DỮ LIỆU YCBG THEO KHUNG THỜI GIAN PHÂN TẦNG
 # ==============================================================================
 def fetch_yccg_today(driver):
+    mode_label = f"Chế độ chạy: {EVENT_NAME_ENV or 'local'} | LAST_RUN_ENV: {LAST_RUN_ENV or 'Mặc định 24h'}"
+    print(f"-> {mode_label}")
     print(f"-> Kết nối Session Mua Sắm Công YCBG (Khung quét: {START_TIME.strftime('%H:%M %d/%m/%Y')} -> {TODAY_STR})...")
+    
     driver.get(f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index")
     time.sleep(10)
 
@@ -224,17 +231,22 @@ def fetch_yccg_today(driver):
     return token;
     """
     token_val = driver.execute_script(js_get_token)
+    
+    # Nếu chưa bắt được token sau 10s, cuộn trang và chờ thêm để Angular gọi API khởi tạo
     if not token_val:
-        time.sleep(4)
+        driver.execute_script("window.scrollTo(0, 500);")
+        time.sleep(6)
         token_val = driver.execute_script(js_get_token)
 
     if token_val:
         print(f"-> Token YCBG trích xuất từ Session: {token_val[:20]}...")
+    else:
+        print("-> [CẢNH BÁO] Chưa bắt được token từ resource log, sẽ gửi trực tiếp kèm session cookie.")
 
     unique_matches = {}
     scanned_codes = set()
+    logged_debug_once = False
 
-    # Giữ nguyên cấu trúc payload chuẩn (matchFields: ["notifyNo", "name"], filters: ["es-ycbg"])
     js_fetch_search_yccg = """
     var callback = arguments[arguments.length - 1];
     var kw = arguments[0];
@@ -267,8 +279,14 @@ def fetch_yccg_today(driver):
             }]
         }])
     })
-    .then(response => response.json())
-    .then(data => callback(data))
+    .then(async response => {
+        const text = await response.text();
+        try {
+            callback({ status: response.status, body: JSON.parse(text) });
+        } catch (e) {
+            callback({ status: response.status, rawText: text.substring(0, 300) });
+        }
+    })
     .catch(err => callback({ error: err.toString() }));
     """
 
@@ -288,13 +306,15 @@ def fetch_yccg_today(driver):
         while fetched_in_kw < max_records:
             current_page_size = min(SERVER_MAX_PAGE_SIZE, max_records - fetched_in_kw)
             try:
-                res = driver.execute_async_script(
+                raw_res = driver.execute_async_script(
                     js_fetch_search_yccg,
                     kw,
                     page_num,
                     current_page_size,
                     token_val
                 )
+
+                res = raw_res.get("body") if isinstance(raw_res, dict) else raw_res
                 data_list = []
                 
                 if isinstance(res, list) and len(res) > 0:
@@ -305,6 +325,9 @@ def fetch_yccg_today(driver):
                     data_list = res.get("page", {}).get("content", [])
 
                 if not isinstance(data_list, list) or not data_list:
+                    if not logged_debug_once and page_num == 0:
+                        print(f"    [DEBUG API] HTTP Status: {raw_res.get('status') if isinstance(raw_res, dict) else 'N/A'} | Phản hồi mẫu: {str(raw_res)[:220]}")
+                        logged_debug_once = True
                     break
 
                 fetched_in_kw += len(data_list)
@@ -334,14 +357,12 @@ def fetch_yccg_today(driver):
                     detail_url = build_yccg_detail_url(item, code, yc_id, bid_form)
                     raw_str = json.dumps(item, ensure_ascii=False).lower()
 
-                    # Lọc địa phương trước để chỉ Deep-Scan danh mục hàng hóa cho các YCBG thuộc 14 tỉnh
                     matched_province = check_location(item, raw_str)
                     if not matched_province:
                         continue
 
                     province_in_kw += 1
 
-                    # Deep-scan danh mục hàng hóa YCBG bằng endpoint chuẩn
                     if yc_id:
                         yccg_detail_str = get_yccg_form_values(driver, yc_id)
                         if yccg_detail_str:
@@ -364,7 +385,6 @@ def fetch_yccg_today(driver):
                             "snippet": raw_str[:1200]
                         }
 
-                # Dừng phân trang nếu server hết dữ liệu hoặc đa số bản ghi đã cũ hơn khung 24h
                 if len(data_list) < current_page_size or older_count > len(data_list) * 0.7:
                     break
 
