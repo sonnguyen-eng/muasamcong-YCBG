@@ -76,9 +76,10 @@ BASE_DOMAIN = "muasamcong.mof.gov.vn"
 PRIMARY_MODEL = "gemini-3.8-flash"
 FALLBACK_MODEL = "gemini-3.8-flash-lite"
 
-# Phân tầng giới hạn quét:
-# - Từ khóa sản phẩm cụ thể: tối đa 150 bản ghi (Trang 0: 100, Trang 1: 50)
-# - Từ khóa chung để bóc tách biểu mẫu chi tiết: tối đa 500 bản ghi (5 trang x 100)
+# Server Mua sắm công giới hạn cứng pageSize tối đa 50 bản ghi/trang:
+# - Từ khóa sản phẩm cụ thể: tối đa 150 bản ghi (3 trang x 50)
+# - Từ khóa chung để bóc tách biểu mẫu chi tiết: tối đa 500 bản ghi (10 trang x 50)
+SERVER_MAX_PAGE_SIZE = 50
 SPECIFIC_MAX_RECORDS = 150
 BROAD_MAX_RECORDS = 500
 
@@ -268,11 +269,12 @@ def fetch_yccg_today(driver):
     for kw, max_records in query_plan:
         print(f"-> Truy vấn YCBG cho từ khóa: '{kw}' (Giới hạn tối đa {max_records} bản ghi)...")
         matched_in_kw = 0
+        province_in_kw = 0
         fetched_in_kw = 0
         page_num = 0
 
         while fetched_in_kw < max_records:
-            current_page_size = min(100, max_records - fetched_in_kw)
+            current_page_size = min(SERVER_MAX_PAGE_SIZE, max_records - fetched_in_kw)
             try:
                 res = driver.execute_async_script(
                     js_fetch_search_yccg,
@@ -326,6 +328,8 @@ def fetch_yccg_today(driver):
                     if not matched_province:
                         continue
 
+                    province_in_kw += 1
+
                     if yc_id:
                         yccg_detail_str = get_yccg_form_values(driver, yc_id, token_val)
                         if yccg_detail_str:
@@ -357,7 +361,7 @@ def fetch_yccg_today(driver):
                 print(f"[CẢNH BÁO FETCH YCBG] Từ khóa '{kw}' (Trang {page_num}): {e}")
                 break
 
-        print(f"    + Server trả về {fetched_in_kw} YCBG -> Khớp khung thời gian, địa phương & từ khóa: {matched_in_kw} thông báo.")
+        print(f"    + Server trả về {fetched_in_kw} YCBG (mới thuộc 14 tỉnh: {province_in_kw}) -> Khớp thêm từ khóa y tế: {matched_in_kw} thông báo.")
         time.sleep(0.3)
 
     return list(unique_matches.values())
