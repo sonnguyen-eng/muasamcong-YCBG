@@ -11,7 +11,9 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 
+# ==============================================================================
 # 1. CẤU HÌNH BIẾN MÔI TRƯỜNG & DANH SÁCH 19 TỪ KHÓA Y TẾ
+# ==============================================================================
 RAW_GEMINI_KEYS = os.environ.get("GEMINI_API_KEY", "").strip()
 GEMINI_API_KEYS = [k.strip() for k in RAW_GEMINI_KEYS.split(",") if k.strip()]
 current_key_index = 0
@@ -31,11 +33,12 @@ KEYWORDS = [
 ]
 
 BROAD_QUERIES = [
-    "thiết bị y tế", "trang thiết bị y tế", "y tế", 
-    "bệnh viện", "báo giá", "vật tư y tế"
+    "thiết bị y tế", "y tế", "bệnh viện", "báo giá", "vật tư y tế"
 ]
 
-# 2. DANH SÁCH 14 TỈNH / THÀNH PHỐ MỤC TIÊU (BAO GỒM TÊN CŨ/MỚI & VIẾT TẮT)
+# ==============================================================================
+# 2. DANH SÁCH 14 TỈNH / THÀNH PHỐ MỤC TIÊU (BAO GỒM TÊN TỈNH CŨ/MỚI & VIẾT TẮT)
+# ==============================================================================
 TARGET_LOCATIONS = [
     "Thành phố Đà Nẵng", "Tỉnh Quảng Ngãi", "Tỉnh Đắc Lắc", "Tỉnh Đắk Lắk", "Tỉnh Gia Lai", 
     "Tỉnh Khánh Hòa", "Tỉnh Lâm Đồng", "Thành phố Hồ Chí Minh", "Thành phố Đồng Nai", 
@@ -64,6 +67,7 @@ TZ_VN = timezone(timedelta(hours=7))
 NOW_VN = datetime.now(TZ_VN)
 TODAY_STR = NOW_VN.strftime("%H:%M %d/%m/%Y")
 
+# Tính toán mốc START_TIME dựa trên lịch chạy tự động trước đó
 if LAST_RUN_ENV:
     try:
         START_TIME = datetime.fromisoformat(LAST_RUN_ENV.replace("Z", "+00:00")).astimezone(TZ_VN)
@@ -78,12 +82,14 @@ FALLBACK_MODEL = "gemini-3.8-flash-lite"
 
 # Server Mua sắm công giới hạn cứng pageSize tối đa 50 bản ghi/trang:
 # - Từ khóa sản phẩm cụ thể: tối đa 150 bản ghi (3 trang x 50)
-# - Từ khóa chung để bóc tách biểu mẫu chi tiết: tối đa 500 bản ghi (10 trang x 50)
+# - Từ khóa chung để bóc tách chi tiết hàng hóa: tối đa 500 bản ghi (10 trang x 50)
 SERVER_MAX_PAGE_SIZE = 50
 SPECIFIC_MAX_RECORDS = 150
 BROAD_MAX_RECORDS = 500
 
+# ==============================================================================
 # 3. KHỞI TẠO CHROME HEADLESS
+# ==============================================================================
 def init_driver():
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
@@ -96,11 +102,14 @@ def init_driver():
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
     return driver
 
-# 4. LỌC THỜI GIAN ĐĂNG TRONG KHOẢNG [START_TIME -> NOW_VN]
+# ==============================================================================
+# 4. LỌC THỜI GIAN ĐĂNG TRONG KHOẢNG [START_TIME -> NOW_VN] (Chuẩn giờ VN UTC+7)
+# ==============================================================================
 def is_published_in_time_window(item):
     pub_date_str = item.get("publicDate") or item.get("originalPublicDate") or ""
     if not pub_date_str:
         return True
+    
     try:
         clean_date_str = pub_date_str.split(".")[0].replace("Z", "")
         dt_obj = datetime.strptime(clean_date_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=TZ_VN)
@@ -108,7 +117,9 @@ def is_published_in_time_window(item):
     except Exception:
         return True
 
+# ==============================================================================
 # 5. ĐỊNH DẠNG HẠN NỘP BÁO GIÁ DỄ ĐỌC
+# ==============================================================================
 def format_date_str(date_str):
     if not date_str:
         return "Chưa xác định"
@@ -119,7 +130,9 @@ def format_date_str(date_str):
     except Exception:
         return str(date_str)
 
+# ==============================================================================
 # 6. KIỂM TRA & CHUẨN HÓA ĐỊA PHƯƠNG
+# ==============================================================================
 def check_location(item, raw_str):
     found_locs = []
     investor = str(item.get("investorName") or item.get("procuringEntityName") or "").lower()
@@ -140,19 +153,15 @@ def check_location(item, raw_str):
 
     return list(set(found_locs))
 
-# 7. DEEP-SCAN LẤY CHI TIẾT DANH MỤC HÀNG HÓA YCBG
-def get_yccg_form_values(driver, yc_id, token_val=""):
+# ==============================================================================
+# 7. DEEP-SCAN LẤY CHI TIẾT DANH MỤC HÀNG HÓA YCBG (GIỮ NGUYÊN ENDPOINT CHUẨN)
+# ==============================================================================
+def get_yccg_form_values(driver, yc_id):
     js_get_yccg = """
     var callback = arguments[arguments.length - 1];
     var ycId = arguments[0];
-    var token = arguments[1];
     
-    let url = '/o/egp-portal-contractor-selection-v2/services/get-request-quote';
-    if (token) {
-        url += '?token=' + token;
-    }
-    
-    fetch(url, {
+    fetch('/o/egp-portal-contractor-selection-v2/services/get-request-quote', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -167,14 +176,16 @@ def get_yccg_form_values(driver, yc_id, token_val=""):
     .catch(err => callback({ error: err.toString() }));
     """
     try:
-        res = driver.execute_async_script(js_get_yccg, yc_id, token_val)
+        res = driver.execute_async_script(js_get_yccg, yc_id)
         if isinstance(res, dict) and not res.get("error"):
             return json.dumps(res, ensure_ascii=False).lower()
     except Exception:
         pass
     return ""
 
+# ==============================================================================
 # 8. TẠO URL CHI TIẾT YCBG CHUẨN V2
+# ==============================================================================
 def build_yccg_detail_url(item, code, yc_id, bid_form):
     url = (
         f"https://{BASE_DOMAIN}/web/guest/contractor-selection?"
@@ -190,7 +201,9 @@ def build_yccg_detail_url(item, code, yc_id, bid_form):
     )
     return url
 
+# ==============================================================================
 # 9. TRÍCH XUẤT DỮ LIỆU YCBG THEO KHUNG THỜI GIAN PHÂN TẦNG
+# ==============================================================================
 def fetch_yccg_today(driver):
     print(f"-> Kết nối Session Mua Sắm Công YCBG (Khung quét: {START_TIME.strftime('%H:%M %d/%m/%Y')} -> {TODAY_STR})...")
     driver.get(f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index")
@@ -211,23 +224,23 @@ def fetch_yccg_today(driver):
     return token;
     """
     token_val = driver.execute_script(js_get_token)
+    if not token_val:
+        time.sleep(4)
+        token_val = driver.execute_script(js_get_token)
+
     if token_val:
         print(f"-> Token YCBG trích xuất từ Session: {token_val[:20]}...")
 
     unique_matches = {}
     scanned_codes = set()
 
-    from_date_iso = START_TIME.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    to_date_iso = NOW_VN.strftime("%Y-%m-%dT%H:%M:%S.999Z")
-
+    # Giữ nguyên cấu trúc payload chuẩn (matchFields: ["notifyNo", "name"], filters: ["es-ycbg"])
     js_fetch_search_yccg = """
     var callback = arguments[arguments.length - 1];
     var kw = arguments[0];
     var pageNum = arguments[1];
     var pageSize = arguments[2];
-    var fromDate = arguments[3];
-    var toDate = arguments[4];
-    var token = arguments[5];
+    var token = arguments[3];
     
     let url = '/o/egp-portal-contractor-selection-v2/services/smart/search';
     if (token) {
@@ -247,10 +260,9 @@ def fetch_yccg_today(driver):
                 index: "es-contractor-selection",
                 keyWord: kw,
                 matchType: "all-1",
-                matchFields: ["notifyNo", "name", "generalTasks", "goodsName"],
+                matchFields: ["notifyNo", "name"],
                 filters: [
-                    { fieldName: "type", searchType: "in", fieldValues: ["es-ycbg"] },
-                    { fieldName: "publicDate", searchType: "range", from: fromDate, to: toDate }
+                    { fieldName: "type", searchType: "in", fieldValues: ["es-ycbg"] }
                 ]
             }]
         }])
@@ -281,8 +293,6 @@ def fetch_yccg_today(driver):
                     kw,
                     page_num,
                     current_page_size,
-                    from_date_iso,
-                    to_date_iso,
                     token_val
                 )
                 data_list = []
@@ -324,14 +334,16 @@ def fetch_yccg_today(driver):
                     detail_url = build_yccg_detail_url(item, code, yc_id, bid_form)
                     raw_str = json.dumps(item, ensure_ascii=False).lower()
 
+                    # Lọc địa phương trước để chỉ Deep-Scan danh mục hàng hóa cho các YCBG thuộc 14 tỉnh
                     matched_province = check_location(item, raw_str)
                     if not matched_province:
                         continue
 
                     province_in_kw += 1
 
+                    # Deep-scan danh mục hàng hóa YCBG bằng endpoint chuẩn
                     if yc_id:
-                        yccg_detail_str = get_yccg_form_values(driver, yc_id, token_val)
+                        yccg_detail_str = get_yccg_form_values(driver, yc_id)
                         if yccg_detail_str:
                             raw_str += " " + yccg_detail_str
 
@@ -352,6 +364,7 @@ def fetch_yccg_today(driver):
                             "snippet": raw_str[:1200]
                         }
 
+                # Dừng phân trang nếu server hết dữ liệu hoặc đa số bản ghi đã cũ hơn khung 24h
                 if len(data_list) < current_page_size or older_count > len(data_list) * 0.7:
                     break
 
@@ -366,7 +379,9 @@ def fetch_yccg_today(driver):
 
     return list(unique_matches.values())
 
-# 10. PHÂN TÍCH YCBG VỚI GEMINI AI (CHIA LÔ + RETRY 503 + FALLBACK GEMINI 3 + XOAY KEY)
+# ==============================================================================
+# 10. PHÂN TÍCH YCBG VỚI GEMINI AI (CHIA LÔ + RETRY 503 + FALLBACK GEMINI 3)
+# ==============================================================================
 def analyze_batch_with_gemini(batch_items):
     global current_key_index, GEMINI_API_KEYS
     from google import genai
@@ -450,7 +465,9 @@ def analyze_with_gemini(candidates):
 
     return analyzed_results
 
+# ==============================================================================
 # 11. GỬI EMAIL BÁO CÁO YCBG
+# ==============================================================================
 def send_email_report(matched_list):
     if not RECEIVER_EMAIL:
         print("[LỖI CẤU HÌNH] Chưa khai báo email nhận.")
@@ -535,6 +552,7 @@ def send_email_report(matched_list):
         except Exception as e:
             print(f"[LỖI GỬI EMAIL SMTP] {e}")
 
+
 def main():
     print(f"=== CRAWL & DEEP-SCAN YCBG (Khung quét: {START_TIME.strftime('%H:%M %d/%m/%Y')} -> {TODAY_STR}) ===")
     driver = init_driver()
@@ -544,6 +562,7 @@ def main():
         send_email_report(final_matches)
     finally:
         driver.quit()
+
 
 if __name__ == "__main__":
     main()
