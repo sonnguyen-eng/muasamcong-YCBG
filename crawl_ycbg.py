@@ -28,11 +28,11 @@ LAST_RUN_ENV = os.environ.get("LAST_RUN_TIMESTAMP", "").strip()
 EVENT_NAME_ENV = os.environ.get("GITHUB_EVENT_NAME", "").strip()
 
 KEYWORDS = [
-    "nội soi", "Bàn mổ", "đèn mổ", "hệ thống khí y tế", "vận chuyển mẫu", 
+   "nội soi", "Bàn mổ", "đèn mổ", "hệ thống khí y tế", "vận chuyển mẫu", 
     "ERCP", "Monitor theo dõi bệnh nhân", "Máy hấp tiệt trùng", "Nhiệt độ thấp", 
     "máy gây mê", "Bơm tiêm điện", "máy truyền dịch", "bàn khám sản", 
     "Monitor sản khoa", "máy hấp ướt", "giường ICU", "giường cấp cứu", 
-    "giường đa năng", "giường bệnh", "Bồn oxy lỏng", "Oxy trung tâm"
+    "giường đa năng", "giường bệnh", "Bồn oxy lỏng", "Oxy trung tâm", "máy chạy thận", "HDF Online", "Ống soi"
 ]
 
 BROAD_QUERIES = [
