@@ -48,6 +48,13 @@ SHEET_HEADERS_BY_TAB = {
     ] + SALES_WORKFLOW_HEADERS
 }
 
+# Độ rộng chuẩn (pixel) cho từng cột để hiển thị gọn trên cả máy tính và điện thoại
+COLUMN_WIDTHS_BY_TAB = {
+    "YCCG": [155, 165, 130, 145, 220, 320, 135, 140, 135, 155, 340, 110, 140, 140, 130, 140, 140],
+    "KHLCNT": [155, 130, 165, 130, 145, 220, 320, 145, 145, 140, 135, 155, 340, 110, 140, 140, 130, 140, 140],
+    "TBMT": [155, 85, 165, 130, 145, 220, 320, 150, 140, 135, 155, 340, 110, 140, 140, 130, 140, 140]
+}
+
 
 def connect_gsheet():
     if not GSHEET_ID or not GCP_SA_JSON:
@@ -61,6 +68,52 @@ def connect_gsheet():
     except Exception as e:
         print(f"[LỖI KẾT NỐI GOOGLE SHEET] {e}")
         return None
+
+
+def apply_sheet_layout_and_wrap(spreadsheet, ws, tab_name):
+    """Tự động bật xuống dòng (WRAP), căn lề, cố định tiêu đề và đặt độ rộng cột chuẩn."""
+    try:
+        sheet_id = ws.id
+        col_widths = COLUMN_WIDTHS_BY_TAB.get(tab_name, [])
+        num_cols = len(col_widths) or 18
+
+        # 1. Bật tự động xuống dòng (WRAP) và căn trên (TOP) cho toàn bộ ô dữ liệu
+        ws.format(f"A1:{gspread.utils.rowcol_to_a1(2000, num_cols)}", {
+            "wrapStrategy": "WRAP",
+            "verticalAlignment": "TOP"
+        })
+
+        # 2. Định dạng riêng hàng tiêu đề (dòng 1): In đậm, nền xanh nhạt, căn giữa
+        ws.format(f"1:1", {
+            "textFormat": {"bold": True},
+            "backgroundColor": {"red": 0.88, "green": 0.94, "blue": 1.0},
+            "verticalAlignment": "MIDDLE",
+            "wrapStrategy": "WRAP"
+        })
+
+        # 3. Cố định hàng 1 (tiêu đề) và cột A (Mã gói) để lướt trên điện thoại không bị mất dấu
+        ws.freeze(rows=1, cols=1)
+
+        # 4. Cập nhật độ rộng từng cột qua batch_update
+        requests = []
+        for idx, width_px in enumerate(col_widths):
+            requests.append({
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": idx,
+                        "endIndex": idx + 1
+                    },
+                    "properties": {"pixelSize": width_px},
+                    "fields": "pixelSize"
+                }
+            })
+
+        if requests:
+            spreadsheet.batch_update({"requests": requests})
+    except Exception as e:
+        print(f"[CẢNH BÁO FORMAT SHEET] {e}")
 
 
 def get_or_create_tab(spreadsheet, tab_name, headers):
@@ -77,10 +130,8 @@ def get_or_create_tab(spreadsheet, tab_name, headers):
     existing_first_row = ws.row_values(1)
     if not existing_first_row:
         ws.append_row(headers, value_input_option="USER_ENTERED")
-        ws.format("1:1", {
-            "textFormat": {"bold": True},
-            "backgroundColor": {"red": 0.9, "green": 0.95, "blue": 1.0}
-        })
+
+    apply_sheet_layout_and_wrap(spreadsheet, ws, tab_name)
     return ws
 
 
@@ -92,6 +143,13 @@ def build_unique_key(source_type, item):
         ver = str(item.get("notify_ver") or "00").strip()
         return f"{code}-{ver}"
     return code
+
+
+def format_hyperlink(url):
+    clean_url = str(url or "").strip().replace('"', '%22')
+    if not clean_url:
+        return ""
+    return f'=HYPERLINK("{clean_url}", "Xem chi tiết")'
 
 
 def sync_data(source_type):
@@ -143,7 +201,7 @@ def sync_data(source_type):
         matched_kw = item.get("matched_kw", "")
         location = item.get("location", "")
         reason = item.get("reason", "")
-        detail_url = item.get("detail_url", "")
+        link_cell = format_hyperlink(item.get("detail_url", ""))
 
         if source_type == "YCCG":
             row = [
@@ -158,13 +216,13 @@ def sync_data(source_type):
                 location,
                 bu_group,
                 reason,
-                detail_url
+                link_cell
             ] + empty_sales_cols
 
         elif source_type == "KHLCNT":
             row = [
                 u_key,
-                item.get("decision_no", ""),
+                f"'{item.get('decision_no', '')}" if item.get("decision_no") else "",
                 stage,
                 item.get("public_date") or SYNC_TIME_STR,
                 province,
@@ -176,13 +234,14 @@ def sync_data(source_type):
                 location,
                 bu_group,
                 reason,
-                detail_url
+                link_cell
             ] + empty_sales_cols
 
         else:  # TBMT
+            ver_str = str(item.get("notify_ver") or "00").strip()
             row = [
                 u_key,
-                item.get("notify_ver", "00"),
+                f"'{ver_str}",
                 stage,
                 SYNC_TIME_STR,
                 province,
@@ -193,18 +252,19 @@ def sync_data(source_type):
                 location,
                 bu_group,
                 reason,
-                detail_url
+                link_cell
             ] + empty_sales_cols
 
         new_rows.append(row)
 
     if new_rows:
         ws.append_rows(new_rows, value_input_option="USER_ENTERED")
-        print(f"[SUCCESS GSHEET] Đã ghi thêm {len(new_rows)} dòng MỚI vào sheet '{source_type}'.")
+        apply_sheet_layout_and_wrap(spreadsheet, ws, source_type)
+        print(f"[SUCCESS GSHEET] Đã ghi thêm {len(new_rows)} dòng MỚI và định dạng xuống dòng trên sheet '{source_type}'.")
     else:
         print(f"[INFO GSHEET] Toàn bộ {len(records)} bản ghi đã tồn tại trên sheet '{source_type}' (0 dòng trùng được ghi thêm).")
 
 
 if __name__ == "__main__":
-    src = sys.argv[1].upper() if len(sys.argv) > 1 else "YCCG"
+    src = sys.argv[1].upper() if len(sys.argv) > 1 else "TBMT"
     sync_data(src)
