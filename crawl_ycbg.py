@@ -34,7 +34,7 @@ KEYWORDS = [
 ]
 
 BROAD_QUERIES = [
-    "thiết bị y tế", "y tế", "bệnh viện", "báo giá", "vật tư y tế"
+    "thiết bị y tế", "y tế", "bệnh viện", "báo giá", "vật tư y tế", "mua sắm", "trang thiết bị"
 ]
 
 # 2. DANH SÁCH 14 TỈNH / THÀNH PHỐ MỤC TIÊU
@@ -66,7 +66,7 @@ FALLBACK_MODEL = "gemini-3.8-flash-lite"
 
 # Phân tầng giới hạn bản ghi quét (Server trả về tối đa 50 bản ghi/trang):
 # - 19 từ khóa sản phẩm cụ thể: tối đa 150 bản ghi (3 trang x 50)
-# - 5 từ khóa chung mở rộng: tối đa 500 bản ghi (10 trang x 50)
+# - 7 từ khóa chung mở rộng: tối đa 500 bản ghi (10 trang x 50)
 SERVER_MAX_PAGE_SIZE = 50
 SPECIFIC_MAX_RECORDS = 150
 BROAD_MAX_RECORDS = 500
@@ -93,7 +93,6 @@ def is_published_in_time_window(item):
     
     try:
         clean_date_str = pub_date_str.split(".")[0].replace("Z", "")
-        # publicDate từ server Mua sắm công ở múi giờ Việt Nam (UTC+7), ví dụ: "2026-11-13T15:43:08.261"
         dt_obj = datetime.strptime(clean_date_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=TZ_VN)
         return START_TIME <= dt_obj <= NOW_VN
     except Exception:
@@ -203,7 +202,6 @@ def get_latest_token_from_perf(driver):
 
 
 def refresh_session_token(driver, kw_hint="y tế"):
-    # Xóa resource buffer cũ để bắt token mới nhất sinh ra từ thao tác tìm kiếm
     driver.execute_script("window.performance.clearResourceTimings();")
     try:
         inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[placeholder*='tìm'], input[placeholder*='Tìm'], input[placeholder*='từ khóa']")
@@ -222,7 +220,6 @@ def refresh_session_token(driver, kw_hint="y tế"):
     except Exception:
         pass
 
-    # Fallback: tải lại trang tra cứu nếu không tìm thấy ô input
     driver.get(f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index")
     time.sleep(8)
     return get_latest_token_from_perf(driver)
@@ -247,7 +244,6 @@ def fetch_yccg_today(driver):
     scanned_codes = set()
     api_calls_since_refresh = 0
 
-    # Định dạng chuẩn F12: gửi kèm range publicDate để server ưu tiên trả về gói thầu mới trong khung quét
     from_date_str = START_TIME.strftime("%Y-%m-%dT%H:%M:%S.000")
     to_date_str = NOW_VN.strftime("%Y-%m-%dT%H:%M:%S.999")
 
@@ -312,7 +308,6 @@ def fetch_yccg_today(driver):
         query_plan.append((kw, BROAD_MAX_RECORDS))
 
     for kw, max_records in query_plan:
-        # Làm mới reCAPTCHA token sau mỗi 12 truy vấn để không bị server trả về rỗng
         if api_calls_since_refresh >= 12:
             new_tok = refresh_session_token(driver, kw)
             if new_tok:
@@ -357,7 +352,6 @@ def fetch_yccg_today(driver):
                     if total_elements is None:
                         total_elements = page_obj.get("totalElements")
 
-                # Nếu trang 0 trả về rỗng (totalElements is None hoặc 0 do token hết hạn), làm mới token và thử lại 1 lần
                 if (not isinstance(data_list, list) or not data_list) and page_num == 0 and total_elements is None and not retried_token_for_kw:
                     retried_token_for_kw = True
                     new_tok = refresh_session_token(driver, kw)
@@ -394,14 +388,12 @@ def fetch_yccg_today(driver):
                     detail_url = build_yccg_detail_url(item, code, yc_id, bid_form)
                     raw_str = json.dumps(item, ensure_ascii=False).lower()
 
-                    # Lọc 14 tỉnh/thành phố trước để chỉ Deep-Scan các gói thầu thuộc địa bàn
                     matched_province = check_location(item, raw_str)
                     if not matched_province:
                         continue
 
                     province_in_kw += 1
 
-                    # Deep-scan bảng danh mục hàng hóa chi tiết (bidoRequestQuote.formValue)
                     if yc_id:
                         yccg_detail_str = get_yccg_form_values(driver, yc_id)
                         if yccg_detail_str:
@@ -424,7 +416,6 @@ def fetch_yccg_today(driver):
                             "snippet": raw_str[:1200]
                         }
 
-                # Dừng khi server đã trả về toàn bộ bản ghi hiện có hoặc hết trang
                 if len(data_list) < current_page_size:
                     break
                 if isinstance(total_elements, int) and fetched_in_kw >= total_elements:
