@@ -9,6 +9,8 @@ from email.mime.text import MIMEText
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from webdriver_manager.chrome import ChromeDriverManager
 
 # 1. CẤU HÌNH BIẾN MÔI TRƯỜNG & DANH SÁCH 19 TỪ KHÓA Y TẾ
@@ -48,11 +50,11 @@ NOW_VN = datetime.now(TZ_VN)
 TODAY_STR = NOW_VN.strftime("%H:%M %d/%m/%Y")
 
 # Tính toán mốc START_TIME dựa trên lịch chạy tự động (schedule) thành công gần nhất
-# Lùi thêm 10 phút đệm an toàn để bù trừ độ trễ khởi động runner của GitHub Actions
+# Lùi thêm 15 phút đệm an toàn để bù trừ độ trễ khởi động runner của GitHub Actions
 if LAST_RUN_ENV:
     try:
         parsed_last_run = datetime.fromisoformat(LAST_RUN_ENV.replace("Z", "+00:00")).astimezone(TZ_VN)
-        START_TIME = parsed_last_run - timedelta(minutes=10)
+        START_TIME = parsed_last_run - timedelta(minutes=15)
     except Exception:
         START_TIME = NOW_VN - timedelta(hours=24)
 else:
@@ -91,7 +93,8 @@ def is_published_in_time_window(item):
     
     try:
         clean_date_str = pub_date_str.split(".")[0].replace("Z", "")
-        dt_obj = datetime.strptime(clean_date_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).astimezone(TZ_VN)
+        # publicDate từ server Mua sắm công ở múi giờ Việt Nam (UTC+7), ví dụ: "2026-11-13T15:43:08.261"
+        dt_obj = datetime.strptime(clean_date_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=TZ_VN)
         return START_TIME <= dt_obj <= NOW_VN
     except Exception:
         return True
@@ -135,7 +138,7 @@ def check_location(item, raw_str):
 
     return list(set(found_locs))
 
-# 7. DEEP-SCAN LẤY CHI TIẾT DANH MỤC HÀNG HÓA YCBG
+# 7. DEEP-SCAN LẤY CHI TIẾT DANH MỤC HÀNG HÓA YCBG (BÓC TÁCH BẢNG formValue)
 def get_yccg_form_values(driver, yc_id):
     js_get_yccg = """
     var callback = arguments[arguments.length - 1];
@@ -157,7 +160,7 @@ def get_yccg_form_values(driver, yc_id):
     """
     try:
         res = driver.execute_async_script(js_get_yccg, yc_id)
-        if isinstance(res, dict):
+        if isinstance(res, dict) and not res.get("error"):
             return json.dumps(res, ensure_ascii=False).lower()
     except Exception:
         pass
@@ -179,12 +182,13 @@ def build_yccg_detail_url(item, code, yc_id, bid_form):
     )
     return url
 
-# 9. TRÍCH XUẤT TOKEN TỪ SESSION TRÌNH DUYỆT (CHỜ TỐI ĐA 25S)
-def extract_session_token(driver):
+# 9. TRÍCH XUẤT & LÀM MỚI RECAPTCHA TOKEN TỪ SESSION TRÌNH DUYỆT
+def get_latest_token_from_perf(driver):
     js_get_token = """
     let token = '';
     let entries = window.performance.getEntriesByType('resource');
-    for (let e of entries) {
+    for (let i = entries.length - 1; i >= 0; i--) {
+        let e = entries[i];
         if (e.name && e.name.includes('token=')) {
             let match = e.name.match(/token=([^&]+)/);
             if (match) {
@@ -195,29 +199,57 @@ def extract_session_token(driver):
     }
     return token;
     """
-    for attempt in range(5):
-        token_val = driver.execute_script(js_get_token)
-        if token_val:
-            return token_val
-        time.sleep(3)
-    return ""
+    return driver.execute_script(js_get_token) or ""
 
-# 10. TRÍCH XUẤT DỮ LIỆU YCBG THEO KHUNG THỜI GIAN PHÂN TẦNG
+
+def refresh_session_token(driver, kw_hint="y tế"):
+    # Xóa resource buffer cũ để bắt token mới nhất sinh ra từ thao tác tìm kiếm
+    driver.execute_script("window.performance.clearResourceTimings();")
+    try:
+        inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[placeholder*='tìm'], input[placeholder*='Tìm'], input[placeholder*='từ khóa']")
+        for inp in inputs:
+            if inp.is_displayed():
+                inp.click()
+                inp.send_keys(Keys.CONTROL, "a")
+                inp.send_keys(Keys.BACKSPACE)
+                inp.send_keys(kw_hint)
+                inp.send_keys(Keys.RETURN)
+                time.sleep(5)
+                new_tok = get_latest_token_from_perf(driver)
+                if new_tok:
+                    return new_tok
+                break
+    except Exception:
+        pass
+
+    # Fallback: tải lại trang tra cứu nếu không tìm thấy ô input
+    driver.get(f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index")
+    time.sleep(8)
+    return get_latest_token_from_perf(driver)
+
+# 10. TRÍCH XUẤT DỮ LIỆU YCBG ĐỦ PHÂN TẦNG (150 - 500 BẢN GHI)
 def fetch_yccg_today(driver):
     print(f"-> Chế độ chạy: {EVENT_NAME_ENV or 'local'} | Mốc lịch sử gốc: {LAST_RUN_ENV or 'Mặc định 24h'}")
     print(f"-> Kết nối Session Mua Sắm Công YCBG (Khung quét có đệm: {START_TIME.strftime('%H:%M %d/%m/%Y')} -> {TODAY_STR})...")
     driver.get(f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index")
-    time.sleep(8)
+    time.sleep(9)
 
-    token_val = extract_session_token(driver)
+    token_val = get_latest_token_from_perf(driver)
+    if not token_val:
+        token_val = refresh_session_token(driver, "y tế")
+
     if token_val:
         print(f"-> Token YCBG trích xuất từ Session: {token_val[:20]}...")
     else:
-        print(f"-> [CẢNH BÁO SESSION] Chưa trích xuất được token (Page Title: '{driver.title}'). Thử gọi trực tiếp...")
+        print(f"-> [CẢNH BÁO SESSION] Chưa trích xuất được token (Page Title: '{driver.title}').")
 
     unique_matches = {}
     scanned_codes = set()
-    debug_logged = False
+    api_calls_since_refresh = 0
+
+    # Định dạng chuẩn F12: gửi kèm range publicDate để server ưu tiên trả về gói thầu mới trong khung quét
+    from_date_str = START_TIME.strftime("%Y-%m-%dT%H:%M:%S.000")
+    to_date_str = NOW_VN.strftime("%Y-%m-%dT%H:%M:%S.999")
 
     js_fetch_search_yccg = """
     var callback = arguments[arguments.length - 1];
@@ -225,6 +257,8 @@ def fetch_yccg_today(driver):
     var pageNum = arguments[1];
     var pageSize = arguments[2];
     var token = arguments[3];
+    var fromDate = arguments[4];
+    var toDate = arguments[5];
     
     let url = '/o/egp-portal-contractor-selection-v2/services/smart/search';
     if (token) {
@@ -240,7 +274,8 @@ def fetch_yccg_today(driver):
             matchType: "all-1",
             matchFields: ["notifyNo", "name"],
             filters: [
-                { fieldName: "type", searchType: "in", fieldValues: ["es-ycbg"] }
+                { fieldName: "type", searchType: "in", fieldValues: ["es-ycbg"] },
+                { fieldName: "publicDate", searchType: "range", from: fromDate, to: toDate }
             ]
         }]
     }];
@@ -258,20 +293,16 @@ def fetch_yccg_today(driver):
         try {
             callback({
                 status: response.status,
-                url: url,
-                payload: payloadObj,
                 body: JSON.parse(rawText)
             });
         } catch (e) {
             callback({
                 status: response.status,
-                url: url,
-                payload: payloadObj,
-                rawText: rawText.substring(0, 400)
+                rawText: rawText.substring(0, 300)
             });
         }
     })
-    .catch(err => callback({ error: err.toString(), url: url, payload: payloadObj }));
+    .catch(err => callback({ error: err.toString() }));
     """
 
     query_plan = []
@@ -281,49 +312,70 @@ def fetch_yccg_today(driver):
         query_plan.append((kw, BROAD_MAX_RECORDS))
 
     for kw, max_records in query_plan:
-        print(f"-> Truy vấn YCBG cho từ khóa: '{kw}' (Tối đa {max_records} bản ghi)...")
+        # Làm mới reCAPTCHA token sau mỗi 12 truy vấn để không bị server trả về rỗng
+        if api_calls_since_refresh >= 12:
+            new_tok = refresh_session_token(driver, kw)
+            if new_tok:
+                token_val = new_tok
+            api_calls_since_refresh = 0
+
+        print(f"-> Truy vấn YCBG cho từ khóa: '{kw}' (Mục tiêu tối đa {max_records} bản ghi)...")
         matched_in_kw = 0
+        province_in_kw = 0
         fetched_in_kw = 0
+        total_elements = None
         page_num = 0
+        retried_token_for_kw = False
 
         while fetched_in_kw < max_records:
             current_page_size = min(SERVER_MAX_PAGE_SIZE, max_records - fetched_in_kw)
             try:
-                raw_res = driver.execute_async_script(js_fetch_search_yccg, kw, page_num, current_page_size, token_val)
+                raw_res = driver.execute_async_script(
+                    js_fetch_search_yccg,
+                    kw,
+                    page_num,
+                    current_page_size,
+                    token_val,
+                    from_date_str,
+                    to_date_str
+                )
+                api_calls_since_refresh += 1
+
                 res = raw_res.get("body") if isinstance(raw_res, dict) else raw_res
                 data_list = []
-                total_elements = 0
                 
                 if isinstance(res, list) and len(res) > 0:
                     first_item = res[0]
                     if isinstance(first_item, dict):
                         page_obj = first_item.get("page", {})
                         data_list = page_obj.get("content", [])
-                        total_elements = page_obj.get("totalElements", len(data_list))
+                        if total_elements is None:
+                            total_elements = page_obj.get("totalElements")
                 elif isinstance(res, dict):
                     page_obj = res.get("page", {})
                     data_list = page_obj.get("content", [])
-                    total_elements = page_obj.get("totalElements", len(data_list))
+                    if total_elements is None:
+                        total_elements = page_obj.get("totalElements")
+
+                # Nếu trang 0 trả về rỗng (totalElements is None hoặc 0 do token hết hạn), làm mới token và thử lại 1 lần
+                if (not isinstance(data_list, list) or not data_list) and page_num == 0 and total_elements is None and not retried_token_for_kw:
+                    retried_token_for_kw = True
+                    new_tok = refresh_session_token(driver, kw)
+                    if new_tok and new_tok != token_val:
+                        token_val = new_tok
+                        api_calls_since_refresh = 0
+                        continue
 
                 if not isinstance(data_list, list) or not data_list:
-                    if not debug_logged and page_num == 0:
-                        status_code = raw_res.get("status") if isinstance(raw_res, dict) else "N/A"
-                        req_url = raw_res.get("url") if isinstance(raw_res, dict) else "N/A"
-                        sample_resp = str(raw_res.get("body") or raw_res.get("rawText") or raw_res)[:350]
-                        print(f"    [XÁC NHẬN PAYLOAD & RESPONSE] HTTP={status_code} | URL={req_url}")
-                        print(f"    [RESPONSE THÔ TỪ SERVER]: {sample_resp}")
-                        debug_logged = True
                     break
 
                 fetched_in_kw += len(data_list)
-                older_count = 0
 
                 for item in data_list:
                     if not isinstance(item, dict):
                         continue
 
                     if not is_published_in_time_window(item):
-                        older_count += 1
                         continue
 
                     code = str(item.get("notifyNo") or item.get("requestQuoteNo") or "")
@@ -342,6 +394,14 @@ def fetch_yccg_today(driver):
                     detail_url = build_yccg_detail_url(item, code, yc_id, bid_form)
                     raw_str = json.dumps(item, ensure_ascii=False).lower()
 
+                    # Lọc 14 tỉnh/thành phố trước để chỉ Deep-Scan các gói thầu thuộc địa bàn
+                    matched_province = check_location(item, raw_str)
+                    if not matched_province:
+                        continue
+
+                    province_in_kw += 1
+
+                    # Deep-scan bảng danh mục hàng hóa chi tiết (bidoRequestQuote.formValue)
                     if yc_id:
                         yccg_detail_str = get_yccg_form_values(driver, yc_id)
                         if yccg_detail_str:
@@ -349,34 +409,36 @@ def fetch_yccg_today(driver):
 
                     matched_kws = [k for k in KEYWORDS if k.lower() in raw_str]
                     if matched_kws:
-                        matched_province = check_location(item, raw_str)
-                        if matched_province:
-                            matched_in_kw += 1
-                            location_detail = "Tiêu đề" if any(k.lower() in f"{code} {title}".lower() for k in matched_kws) else "Chi tiết Hàng hóa Báo giá"
-                            unique_matches[code] = {
-                                "code": code,
-                                "yc_id": yc_id,
-                                "title": title,
-                                "investor": investor,
-                                "bid_close_date": bid_close_date,
-                                "province": ", ".join(matched_province),
-                                "matched_kw": ", ".join(matched_kws),
-                                "location": location_detail,
-                                "detail_url": detail_url,
-                                "snippet": raw_str[:1200]
-                            }
+                        matched_in_kw += 1
+                        location_detail = "Tiêu đề" if any(k.lower() in f"{code} {title}".lower() for k in matched_kws) else "Chi tiết Hàng hóa Báo giá"
+                        unique_matches[code] = {
+                            "code": code,
+                            "yc_id": yc_id,
+                            "title": title,
+                            "investor": investor,
+                            "bid_close_date": bid_close_date,
+                            "province": ", ".join(matched_province),
+                            "matched_kw": ", ".join(matched_kws),
+                            "location": location_detail,
+                            "detail_url": detail_url,
+                            "snippet": raw_str[:1200]
+                        }
 
-                if len(data_list) < current_page_size or older_count > len(data_list) * 0.7:
+                # Dừng khi server đã trả về toàn bộ bản ghi hiện có hoặc hết trang
+                if len(data_list) < current_page_size:
+                    break
+                if isinstance(total_elements, int) and fetched_in_kw >= total_elements:
                     break
 
                 page_num += 1
-                time.sleep(0.4)
+                time.sleep(0.35)
             except Exception as e:
                 print(f"[CẢNH BÁO FETCH YCBG] Từ khóa '{kw}' (Trang {page_num}): {e}")
                 break
 
-        print(f"    + Server trả về {fetched_in_kw} YCBG -> Khớp khung thời gian, địa phương & từ khóa: {matched_in_kw} thông báo.")
-        time.sleep(0.5)
+        total_label = f"/{total_elements}" if isinstance(total_elements, int) else ""
+        print(f"    + Đã tải {fetched_in_kw}{total_label} YCBG (thuộc 14 tỉnh: {province_in_kw}) -> Khớp từ khóa y tế: {matched_in_kw} thông báo.")
+        time.sleep(0.35)
 
     return list(unique_matches.values())
 
