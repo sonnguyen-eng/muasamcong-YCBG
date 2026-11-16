@@ -2,9 +2,9 @@ name: Auto Crawl YCBG Hang Ngay
 
 on:
   schedule:
-    # Chạy tự động lúc 08:00 sáng và 16:30 chiều giờ Việt Nam (01:00 và 09:30 UTC)
-    - cron: '0 1 * * *'
-    - cron: '30 9 * * *'
+    # Chạy tự động lúc 06:00 sáng và 20:30 tối giờ Việt Nam (23:00 và 13:30 UTC)
+    - cron: '0 23 * * *'
+    - cron: '30 13 * * *'
   workflow_dispatch:
 
 permissions:
