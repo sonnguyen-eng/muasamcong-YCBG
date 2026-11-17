@@ -84,10 +84,13 @@ EXCLUDE_NON_MEDICAL_PATTERNS = [
     "kiểm xạ an toàn", "liều kế cá nhân", "khám sức khỏe định kỳ"
 ]
 
-# Cụm từ nhận diện gói thuần THUÊ dịch vụ phần mềm (không phải mua đứt/đầu tư PACS)
-RENTAL_SOFTWARE_TERMS = [
+# Cụm từ nhận diện gói THUÊ PACS / thuê dịch vụ phần mềm (loại trừ tuyệt đối)
+RENTAL_PACS_OR_SOFTWARE_TERMS = [
     "thuê dịch vụ sử dụng phần mềm", "thuê dịch vụ phần mềm",
-    "thuê hệ thống phần mềm", "thuê phần mềm", "cung cấp dịch vụ phần mềm"
+    "thuê dịch vụ hệ thống", "thuê hệ thống ris", "thuê hệ thống pacs",
+    "thuê hệ thống phần mềm", "thuê phần mềm", "thuê pacs", "thuê ris/pacs",
+    "dịch vụ hệ thống thông tin", "ca chụp/tháng",
+    "sl: 12 tháng", "sl: 24 tháng", "sl: 36 tháng", "sl: 6 tháng"
 ]
 
 BROAD_QUERIES = [
@@ -136,8 +139,8 @@ else:
     START_TIME = NOW_VN - timedelta(hours=24)
 
 BASE_DOMAIN = "muasamcong.mof.gov.vn"
-PRIMARY_MODEL = "gemini-2.5-flash"
-FALLBACK_MODEL = "gemini-2.5-flash-lite"
+PRIMARY_MODEL = "gemini-3.8-flash"
+FALLBACK_MODEL = "gemini-3.5-flash-lite"
 
 SERVER_MAX_PAGE_SIZE = 50
 SPECIFIC_MAX_RECORDS = 150
@@ -218,11 +221,6 @@ def check_location(item, raw_str):
 # 6. BÓC TÁCH SÂU CHI TIẾT YCBG (API GET-REQUEST-QUOTE + FALLBACK VIEW-PRICE-REQ)
 # ==============================================================================
 def get_yccg_detail_values(driver, req_id, req_type, token_val):
-    """
-    Gọi API chính xác /services/get-request-quote (cho es-ycbg) để bóc tách:
-    - Bảng danh mục hàng hóa chi tiết trong formValue (category, description, qty, unit)
-    - Tên file đính kèm (otherFileName / briefFileName)
-    """
     js_get_detail = """
     var callback = arguments[arguments.length - 1];
     var reqId = arguments[0];
@@ -338,20 +336,15 @@ def refresh_session_token(driver, kw_hint="y tế"):
     return get_latest_token_from_perf(driver)
 
 # ==============================================================================
-# 8. BỘ LỌC 2 LỚP: LOẠI BỎ YCBG NGOÀI Y TẾ & BẮT YCBG TỔNG DỰ ÁN XÂY MỚI/NÂNG CẤP BV
+# 8. BỘ LỌC 2 LỚP: LOẠI BỎ YCBG NGOÀI Y TẾ & THUÊ PACS; BẮT MUA PACS & DỰ ÁN BV
 # ==============================================================================
 def evaluate_ycbg_medical_relevance(title, investor, extracted_items, attached_files, raw_str):
-    """
-    Đánh giá độ liên quan thực sự đến TBYT, mua sắm/đầu tư PACS hoặc YCBG tổng cho Dự án xây mới/nâng cấp BV:
-    - Bắt trọn YCBG thiết bị lẻ + mua đứt PACS + YCBG tổng cho dự án xây mới/cải tạo nâng cấp bệnh viện.
-    - Loại bỏ tuyệt đối YCBG ngoài ngành y tế (trường học, giao thông, công viên, UBND xã...)
-      và các YCBG thuần THUÊ dịch vụ phần mềm.
-    """
     title_lower = title.lower()
     investor_lower = investor.lower()
     items_lower = " ".join(extracted_items).lower()
     files_lower = " ".join(attached_files).lower()
     core_text = f"{title_lower} {investor_lower} {items_lower} {files_lower}"
+    content_text = f"{title_lower} {items_lower}"
 
     # 1. Chốt chặn loại trừ các dự án ngoài ngành y tế hoặc kiểm xạ/khám sức khỏe định kỳ
     if any(excl in core_text for excl in EXCLUDE_NON_MEDICAL_PATTERNS):
@@ -360,23 +353,21 @@ def evaluate_ycbg_medical_relevance(title, investor, extracted_items, attached_f
     if any(infra in title_lower for infra in ["cầu đi bộ", "tuyến đường", "khu tái định cư", "hệ thống chiếu sáng", "trụ sở", "nhà văn hóa", "công viên"]):
         return False, False, []
 
-    # 2. Loại bỏ gói thuần THUÊ dịch vụ phần mềm (không phải mua đứt/đầu tư PACS)
-    is_software_rental = any(r in core_text for r in RENTAL_SOFTWARE_TERMS)
-    is_purchase_action = any(p in core_text for p in ["mua sắm", "mua ", "đầu tư", "cung cấp", "lắp đặt", "trang bị"])
-    if is_software_rental and not is_purchase_action:
+    # 2. Loại trừ TUYỆT ĐỐI các gói THUÊ dịch vụ phần mềm / THUÊ PACS (kể cả khi ghi "Dịch vụ hệ thống..." hoặc "SL: 12 Tháng")
+    if any(r in content_text for r in RENTAL_PACS_OR_SOFTWARE_TERMS):
         return False, False, []
 
-    # Nếu chỉ là phần mềm bệnh án điện tử / HIS đơn thuần mà không có PACS hoặc TBYT thì bỏ qua
-    if ("bệnh án điện tử" in core_text or "phần mềm quản lý bệnh viện" in core_text) and not any(
-        p in core_text for p in ["pacs", "ris/pacs", "ris - pacs", "lưu trữ và truyền tải hình ảnh", "thiết bị y tế"]
+    # Nếu chỉ là phần mềm bệnh án điện tử / HIS đơn thuần mà không có mua PACS hoặc TBYT thì bỏ qua
+    if ("bệnh án điện tử" in content_text or "phần mềm quản lý bệnh viện" in content_text) and not any(
+        p in content_text for p in ["pacs", "ris/pacs", "ris - pacs", "lưu trữ và truyền tải hình ảnh", "thiết bị y tế"]
     ):
         return False, False, []
 
-    # 3. Kiểm tra thực thể y tế (Bệnh viện, TTYT, Sở Y tế, hoặc Ban QLDA đầu tư công trình Bệnh viện)
+    # 3. Kiểm tra thực thể y tế
     has_medical_entity = any(ent in f"{title_lower} {investor_lower}" for ent in MEDICAL_ENTITY_TERMS)
 
-    # 4. Kiểm tra từ khóa thiết bị y tế & PACS đặc thù trên tiêu đề + bảng danh mục hàng hóa
-    search_scope = f"{title_lower} {items_lower}" if items_lower.strip() else raw_str
+    # 4. Kiểm tra từ khóa thiết bị y tế & mua đứt PACS đặc thù
+    search_scope = content_text if items_lower.strip() else raw_str
     matched_specific = [k for k in SPECIFIC_DEVICE_KEYWORDS if k in search_scope]
 
     # 5. Kiểm tra từ khóa có điều kiện (CHỈ tính khi thuộc thực thể y tế và xuất hiện trong tiêu đề/danh mục)
@@ -391,7 +382,6 @@ def evaluate_ycbg_medical_relevance(title, investor, extracted_items, attached_f
     hospital_proj_label = ""
     if has_medical_entity:
         matched_actions = [act for act in HOSPITAL_PROJECT_ACTIONS if act in title_lower]
-        # Nếu tiêu đề thuộc công trình BV có hành động đầu tư/xây mới/nâng cấp/cung cấp lắp đặt thiết bị
         if matched_actions:
             is_hospital_proj_ycbg = True
             hospital_proj_label = f"YCBG Dự án công trình BV ({', '.join(matched_actions[:2])})"
@@ -614,7 +604,6 @@ def fetch_yccg_today(driver):
                         else:
                             stage_label = "Mời báo giá (YCBG)"
 
-                        # Tự động gắn Note nếu là YCBG tổng dự án BV hoặc danh mục nằm trong file PDF/Excel đính kèm
                         auto_note = ""
                         if is_hospital_proj_ycbg and not extracted_items:
                             auto_note = "YCBG tổng công trình BV (danh mục chi tiết trong file đính kèm) - Tải hồ sơ để chào cấu hình sớm"
@@ -665,7 +654,7 @@ def fetch_yccg_today(driver):
                 break
 
         total_label = f"/{total_elements}" if isinstance(total_elements, int) else ""
-        print(f"    + Đã tải {fetched_in_kw}{total_label} YCBG (thuộc 14 tỉnh: {province_in_kw}) -> Khớp TBYT / PACS / Dự án BV: {matched_in_kw} gói.")
+        print(f"    + Đã tải {fetched_in_kw}{total_label} YCBG (thuộc 14 tỉnh: {province_in_kw}) -> Khớp TBYT / Mua PACS / Dự án BV: {matched_in_kw} gói.")
         time.sleep(0.35)
 
     print(f"=== TỔNG KẾT QUÉT YCBG 14 TỈNH/TP: {len(unique_matches)} GÓI SẠCH KHỚP TIÊU CHÍ ===")
@@ -682,19 +671,18 @@ def analyze_batch_with_gemini(batch_items):
     models_to_try = [
         PRIMARY_MODEL,
         FALLBACK_MODEL,
-        "gemini-2.5-pro",
-        "gemini-2.0-flash"
+        "gemini-3.1-pro-preview"
     ]
 
     prompt = f"""
-Bạn là chuyên gia thẩm định dữ liệu Yêu cầu báo giá (YCBG) Trang thiết bị Y tế, Hệ thống PACS và Dự án đầu tư xây dựng Bệnh viện.
+Bạn là chuyên gia thẩm định dữ liệu Yêu cầu báo giá (YCBG) Trang thiết bị Y tế, Hệ thống PACS (chỉ mua đứt/đầu tư, KHÔNG lấy gói thuê) và Dự án đầu tư xây dựng Bệnh viện.
 Dưới đây là danh sách các YCBG phát hành từ {START_TIME.strftime('%H:%M %d/%m/%Y')} đến {TODAY_STR} tại 14 tỉnh/thành phố phụ trách.
 
 Yêu cầu BẮT BUỘC:
 1. Giữ nguyên toàn bộ thuộc tính gốc của từng phần tử trong danh sách đầu vào.
 2. Thêm trường boolean "is_medical_relevant":
    - Đặt true NẾU YCBG này liên quan đến mua sắm/sửa chữa Trang thiết bị y tế, vật tư y tế, MUA SẮM/ĐẦU TƯ hệ thống PACS (RIS/PACS), hoặc YCBG tổng cho dự án xây mới/cải tạo nâng cấp Bệnh viện / Trung tâm y tế / Cơ sở khám chữa bệnh.
-   - Đặt false nếu đây là YCBG ngoài ngành y tế (trường học, giao thông, công viên, UBND xã, công an, điện lực, di tích) hoặc chỉ là thuê dịch vụ phần mềm hành chính/EMR không có mua sắm PACS/TBYT.
+   - Đặt false nếu đây là YCBG ngoài ngành y tế (trường học, giao thông, công viên, UBND xã, công an, điện lực, di tích) HOẶC là gói THUÊ dịch vụ phần mềm / THUÊ hệ thống RIS/PACS (ví dụ thuê 12 tháng, tính phí theo ca chụp/tháng).
 3. Viết tóm tắt ngắn gọn, rõ ràng danh mục thiết bị / hệ thống PACS / quy mô gói chào giá công trình bệnh viện vào trường "reason" (nếu có số lượng hàng hóa trong "quote_items" hoặc tên file đính kèm trong "attached_files", hãy nêu rõ).
 4. Giữ nguyên hoặc chuẩn hóa trường "stage":
    - "YCBG Tổng (Dự án Xây mới / Nâng cấp BV)" nếu là báo giá tổng cho công trình bệnh viện xây mới/cải tạo nâng cấp.
@@ -834,7 +822,7 @@ def send_email_report(matched_list):
         <div style="font-family: Arial, sans-serif; padding: 20px;">
             <h2 style="color: #0275d8;">BÁO CÁO YÊU CẦU BÁO GIÁ (YCBG)</h2>
             <p>Khung thời gian quét: từ <b>{START_TIME.strftime('%H:%M %d/%m/%Y')}</b> đến <b>{TODAY_STR}</b></p>
-            <p>Đã lọc phát hiện <b>{len(matched_list_sorted)}</b> gói chào giá (TBYT, PACS & Dự án xây mới/nâng cấp BV) thuộc địa bàn phụ trách:</p>
+            <p>Đã lọc phát hiện <b>{len(matched_list_sorted)}</b> gói chào giá (TBYT, Mua PACS & Dự án xây mới/nâng cấp BV) thuộc địa bàn phụ trách:</p>
             <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%; border-color: #ddd;">
                 <tr style="background-color: #f2f8ff;">
                     <th align="center">STT</th>
