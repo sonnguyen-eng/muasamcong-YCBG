@@ -14,7 +14,7 @@ from selenium.webdriver.common.keys import Keys
 from webdriver_manager.chrome import ChromeDriverManager
 
 # ==============================================================================
-# 1. CẤU HÌNH BIẾN MÔI TRƯỜNG & DANH SÁCH TỪ KHÓA Y TẾ
+# 1. CẤU HÌNH BIẾN MÔI TRƯỜNG & BỘ TỪ KHÓA LỌC CHÍNH XÁC Y TẾ / PACS / DỰ ÁN BV
 # ==============================================================================
 RAW_GEMINI_KEYS = os.environ.get("GEMINI_API_KEY", "").strip()
 GEMINI_API_KEYS = [k.strip() for k in RAW_GEMINI_KEYS.split(",") if k.strip()]
@@ -27,27 +27,100 @@ RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL", "").strip() or SENDER_EMAIL
 LAST_RUN_ENV = os.environ.get("LAST_RUN_TIMESTAMP", "").strip()
 EVENT_NAME_ENV = os.environ.get("GITHUB_EVENT_NAME", "").strip()
 
-KEYWORDS = [
-   "nội soi", "Bàn mổ", "đèn mổ", "hệ thống khí y tế", "vận chuyển mẫu", 
-    "ERCP", "Monitor theo dõi bệnh nhân", "Máy hấp tiệt trùng", "Nhiệt độ thấp", 
-    "máy gây mê", "Bơm tiêm điện", "máy truyền dịch", "bàn khám sản", 
-    "Monitor sản khoa", "máy hấp ướt", "giường ICU", "giường cấp cứu", 
-    "giường đa năng", "giường bệnh", "Bồn oxy lỏng", "Oxy trung tâm", "máy chạy thận", "HDF Online", "Ống soi"
+# Nhóm 1: Từ khóa thiết bị y tế & giải pháp PACS đặc thù (khớp trực tiếp)
+SPECIFIC_DEVICE_KEYWORDS = [
+    # Nội soi - Phẫu thuật - Laser
+    "nội soi", "ống soi", "optic nội soi", "ercp", "robot phẫu thuật",
+    "tán sỏi laser", "máy tán sỏi",
+    # Phòng mổ - Gây mê - Hồi sức - Giường
+    "bàn mổ", "đèn mổ", "máy gây mê", "monitor theo dõi bệnh nhân",
+    "máy theo dõi bệnh nhân", "bơm tiêm điện", "máy truyền dịch",
+    "giường icu", "giường cấp cứu", "giường đa năng", "giường bệnh",
+    "hồi sức cấp cứu", "hồi sức sơ sinh", "máy thở", "máy phá rung tim",
+    # Khí y tế - Vận chuyển - Tiệt trùng
+    "hệ thống khí y tế", "bồn oxy lỏng", "oxy trung tâm", "vận chuyển mẫu",
+    "máy hấp tiệt trùng", "nhiệt độ thấp", "máy hấp ướt",
+    # Sản khoa - Chẩn đoán hình ảnh - PACS - Chuyên khoa
+    "bàn khám sản", "monitor sản khoa", "c-arm", "c arm", "x-quang",
+    "máy siêu âm", "siêu âm màu", "siêu âm chẩn đoán", "thận nhân tạo",
+    "máy chạy thận", "hdf online",
+    "pacs", "ris/pacs", "ris - pacs", "lưu trữ và truyền tải hình ảnh",
+    # Gói mua sắm / chào giá thiết bị y tế tổng thể
+    "thiết bị y tế chuyên môn", "thiết bị y tế chuyên dùng",
+    "thiết bị y tế cấp thiết", "mua sắm thiết bị chuyên môn",
+    "mua sắm thiết bị y tế", "mua thiết bị y tế",
+    "cung cấp, lắp đặt thiết bị y tế", "cung cấp lắp đặt thiết bị y tế",
+    "trang thiết bị y tế"
+]
+
+# Nhóm 2: Từ khóa có điều kiện (CHỈ khớp khi đi kèm đơn vị/công trình ngành Y tế)
+CONDITIONAL_KEYWORDS = [
+    "thẩm định giá", "chẩn đoán hình ảnh", "phục hồi chức năng"
+]
+
+# Thực thể / Công trình thuộc ngành Y tế
+MEDICAL_ENTITY_TERMS = [
+    "bệnh viện", "trung tâm y tế", "viện tim", "ngành y tế", "sở y tế",
+    "đại học y khoa", "đại học y dược", "khối khám bệnh", "khối bệnh nhiệt đới",
+    "khoa khám bệnh", "khu khám bệnh", "khu hồi sức", "trung tâm sơ sinh",
+    "trung tâm y khoa", "trạm y tế", "y tế khu vực"
+]
+
+# Hành động YCBG tổng cho dự án xây mới / cải tạo nâng cấp công trình BV
+HOSPITAL_PROJECT_ACTIONS = [
+    "xây dựng mới", "nâng cấp", "cải tạo, sửa chữa", "cải tạo sửa chữa",
+    "dự án đầu tư", "xây dựng khối", "xây dựng khu",
+    "cung cấp, lắp đặt thiết bị", "cung cấp lắp đặt thiết bị",
+    "mua sắm thiết bị", "trang bị thiết bị"
+]
+
+# Từ khóa loại trừ các dự án ngoài ngành y tế hoặc kiểm xạ/khám sức khỏe định kỳ
+EXCLUDE_NON_MEDICAL_PATTERNS = [
+    "thẩm định giá đất", "thi hành bản án", "tuần tra, kiểm tra rừng",
+    "dây chuyền kiểm định phương tiện", "cầu đi bộ", "tái định cư",
+    "công viên", "nhà văn hóa", "trường tiểu học", "trường thcs", "trường thpt",
+    "cao đẳng kỹ thuật", "trụ sở văn phòng", "hệ thống chiếu sáng",
+    "mở rộng, nâng cấp tuyến đường", "kiểm định máy x-quang",
+    "kiểm xạ an toàn", "liều kế cá nhân", "khám sức khỏe định kỳ"
+]
+
+# Cụm từ nhận diện gói thuần THUÊ dịch vụ phần mềm (không phải mua đứt/đầu tư PACS)
+RENTAL_SOFTWARE_TERMS = [
+    "thuê dịch vụ sử dụng phần mềm", "thuê dịch vụ phần mềm",
+    "thuê hệ thống phần mềm", "thuê phần mềm", "cung cấp dịch vụ phần mềm"
 ]
 
 BROAD_QUERIES = [
-    "thiết bị y tế", "y tế", "bệnh viện", "dụng cụ y tế", "mua sắm", "trang thiết bị"
+    "thiết bị y tế", "trang thiết bị y tế", "bệnh viện",
+    "trung tâm y tế", "ngành y tế", "ban quản lý dự án",
+    "xây dựng mới", "nâng cấp", "mua sắm"
 ]
 
 # ==============================================================================
-# 2. DANH SÁCH 14 TỈNH / THÀNH PHỐ MỤC TIÊU
+# 2. DANH SÁCH 14 TỈNH / THÀNH PHỐ MỤC TIÊU PHỤ TRÁCH
 # ==============================================================================
-TARGET_LOCATIONS = [
-    "Thành phố Đà Nẵng", "Tỉnh Quảng Ngãi", "Tỉnh Đắc Lắc", "Tỉnh Đắk Lắk", "Tỉnh Gia Lai", 
-    "Tỉnh Khánh Hòa", "Tỉnh Lâm Đồng", "Thành phố Hồ Chí Minh", "Thành phố Đồng Nai", 
-    "Tỉnh Tây Ninh", "Tỉnh Đồng Tháp", "Tỉnh Vĩnh Long", "Tỉnh An Giang", 
-    "Thành phố Cần Thơ", "Tỉnh Cà Mau"
-]
+LOCATION_ALIASES = {
+    "Thành phố Đà Nẵng": ["đà nẵng", "quảng nam", "tam kỳ", "hội an", "việt - hàn đà nẵng"],
+    "Tỉnh Quảng Ngãi": ["quảng ngãi", "kon tum"],
+    "Tỉnh Đắk Lắk": ["đắk lắk", "đắc lắc", "tây nguyên", "buôn ma thuột", "phú yên", "tuy hòa"],
+    "Tỉnh Gia Lai": ["gia lai", "pleiku", "bình định", "quy nhơn"],
+    "Tỉnh Khánh Hòa": ["khánh hòa", "nha trang", "ninh thuận", "phan rang"],
+    "Tỉnh Lâm Đồng": ["lâm đồng", "đà lạt", "bảo lộc", "đắk nông", "bình thuận", "phan thiết"],
+    "Thành phố Hồ Chí Minh": [
+        "hồ chí minh", "tp.hcm", "tphcm", "tp hcm", "sài gòn", "thủ đức",
+        "bình dương", "bà rịa", "vũng tàu", "phú mỹ", "nhi đồng", "bình dân",
+        "viện tim", "nhân ái", "đại học y dược", "ung bướu", "gò vấp",
+        "bệnh nhiệt đới", "phạm ngọc thạch", "chấn thương", "lê văn thịnh",
+        "thuận an", "tân uyên"
+    ],
+    "Thành phố Đồng Nai": ["đồng nai", "biên hòa", "long khánh", "bình phước", "đồng xoài", "long thành"],
+    "Tỉnh Tây Ninh": ["tây ninh", "long an", "tân an", "thủ thừa", "tân hưng"],
+    "Tỉnh Đồng Tháp": ["đồng tháp", "cao lãnh", "sa đéc", "tiền giang", "mỹ tho", "quân y 120"],
+    "Tỉnh Vĩnh Long": ["vĩnh long", "bến tre", "trà vinh", "nguyễn đình chiểu"],
+    "Tỉnh An Giang": ["an giang", "long xuyên", "châu đốc", "kiên giang", "rạch giá", "phú quốc", "ung bướu kiên giang"],
+    "Thành phố Cần Thơ": ["cần thơ", "hậu giang", "sóc trăng", "thốt nốt"],
+    "Tỉnh Cà Mau": ["cà mau", "bạc liêu"]
+}
 
 TZ_VN = timezone(timedelta(hours=7))
 NOW_VN = datetime.now(TZ_VN)
@@ -63,8 +136,8 @@ else:
     START_TIME = NOW_VN - timedelta(hours=24)
 
 BASE_DOMAIN = "muasamcong.mof.gov.vn"
-PRIMARY_MODEL = "gemini-3.8-flash"
-FALLBACK_MODEL = "gemini-3.8-flash-lite"
+PRIMARY_MODEL = "gemini-2.5-flash"
+FALLBACK_MODEL = "gemini-2.5-flash-lite"
 
 SERVER_MAX_PAGE_SIZE = 50
 SPECIFIC_MAX_RECORDS = 150
@@ -81,19 +154,19 @@ def init_driver():
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-    
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-    return driver
+    chrome_options.add_argument(
+        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    )
+    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
 
 # ==============================================================================
-# 4. LỌC THỜI GIAN ĐĂNG TRONG KHOẢNG [START_TIME -> NOW_VN]
+# 4. LỌC THỜI GIAN ĐĂNG & ĐỊNH DẠNG HẠN NỘP BÁO GIÁ
 # ==============================================================================
 def is_published_in_time_window(item):
     pub_date_str = item.get("publicDate") or item.get("originalPublicDate") or ""
     if not pub_date_str:
         return True
-    
     try:
         clean_date_str = pub_date_str.split(".")[0].replace("Z", "")
         dt_obj = datetime.strptime(clean_date_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=TZ_VN)
@@ -101,11 +174,14 @@ def is_published_in_time_window(item):
     except Exception:
         return True
 
-# ==============================================================================
-# 5. ĐỊNH DẠNG THỜI GIAN ĐÓNG THẦU (HẠN NỘP BÁO GIÁ)
-# ==============================================================================
 def format_bid_close_date(item):
-    close_date_str = item.get("bidCloseDate") or item.get("closeDate") or item.get("expireDate") or ""
+    close_date_str = (
+        item.get("bidCloseDate")
+        or item.get("receptionDateTo")
+        or item.get("closeDate")
+        or item.get("expireDate")
+        or ""
+    )
     if not close_date_str:
         return "Chưa xác định"
     try:
@@ -116,13 +192,13 @@ def format_bid_close_date(item):
         return str(close_date_str)
 
 # ==============================================================================
-# 6. KIỂM TRA & CHUẨN HÓA ĐỊA PHƯƠNG
+# 5. KIỂM TRA & CHUẨN HÓA ĐỊA PHƯƠNG TRONG 14 TỈNH / THÀNH PHỐ MỤC TIÊU
 # ==============================================================================
 def check_location(item, raw_str):
     found_locs = []
     investor = str(item.get("investorName") or item.get("procuringEntityName") or "").lower()
     title = str(item.get("bidName") or item.get("name") or "").lower()
-    search_text = f"{investor} {title} {raw_str}"
+    search_text = f"{investor} {title} {raw_str}".lower()
 
     locations_arr = item.get("locations", [])
     if isinstance(locations_arr, list):
@@ -132,57 +208,93 @@ def check_location(item, raw_str):
                 dist_name = loc.get("districtName", "")
                 search_text += f" {prov_name} {dist_name}".lower()
 
-    if "đắk lắk" in search_text or "đắc lắc" in search_text or "tây nguyên" in search_text or "buôn ma thuột" in search_text:
-        found_locs.append("Tỉnh Đắk Lắk")
-
-    for target in TARGET_LOCATIONS:
-        clean_kw = target.replace("Thành phố ", "").replace("Tỉnh ", "").lower()
-        if clean_kw in search_text:
-            if clean_kw == "đồng nai":
-                found_locs.append("Thành phố Đồng Nai")
-            elif clean_kw not in ["đắk lắk", "đắc lắc"]:
-                found_locs.append(target)
+    for canonical_name, aliases in LOCATION_ALIASES.items():
+        if any(alias in search_text for alias in aliases):
+            found_locs.append(canonical_name)
 
     return list(set(found_locs))
 
 # ==============================================================================
-# 7. BÓC TÁCH SÂU BIỂU MẪU MỜI CHÀO GIÁ (API VIEW-PRICE-REQ)
+# 6. BÓC TÁCH SÂU CHI TIẾT YCBG (API GET-REQUEST-QUOTE + FALLBACK VIEW-PRICE-REQ)
 # ==============================================================================
-def get_yccg_form_values(driver, price_req_id, token_val):
+def get_yccg_detail_values(driver, req_id, req_type, token_val):
+    """
+    Gọi API chính xác /services/get-request-quote (cho es-ycbg) để bóc tách:
+    - Bảng danh mục hàng hóa chi tiết trong formValue (category, description, qty, unit)
+    - Tên file đính kèm (otherFileName / briefFileName)
+    """
     js_get_detail = """
     var callback = arguments[arguments.length - 1];
     var reqId = arguments[0];
-    var token = arguments[1];
-    
-    let url = '/o/egp-portal-contractor-selection-v2/services/expose/lcnt/bid-po-bidp-price-req-view/view-price-req';
+    var reqType = arguments[1];
+    var token = arguments[2];
+
+    let endpoint = (reqType === 'es-price-req')
+        ? '/o/egp-portal-contractor-selection-v2/services/expose/lcnt/bid-po-bidp-price-req-view/view-price-req'
+        : '/o/egp-portal-contractor-selection-v2/services/get-request-quote';
+
     if (token) {
-        url += '?token=' + token;
+        endpoint += '?token=' + token;
     }
 
-    fetch(url, {
+    fetch(endpoint, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             'Accept': 'application/json, text/plain, */*'
         },
-        body: JSON.stringify({
-            id: reqId
-        })
+        body: JSON.stringify({ id: reqId })
     })
     .then(response => response.json())
     .then(data => callback(data))
     .catch(err => callback({ error: err.toString() }));
     """
+    extracted_items = []
+    attached_files = []
+    detail_raw_lower = ""
+
     try:
-        res = driver.execute_async_script(js_get_detail, price_req_id, token_val)
+        res = driver.execute_async_script(js_get_detail, req_id, req_type, token_val)
         if isinstance(res, dict) and not res.get("error"):
-            return json.dumps(res, ensure_ascii=False).lower()
+            detail_raw_lower = json.dumps(res, ensure_ascii=False).lower()
+            rq_obj = res.get("bidoRequestQuote") or res.get("bidPoBidpPriceReqView") or res
+
+            if isinstance(rq_obj, dict):
+                for f_key in ["otherFileName", "briefFileName", "decisionFileName"]:
+                    f_val = rq_obj.get(f_key)
+                    if f_val:
+                        attached_files.append(str(f_val))
+
+                form_val_raw = rq_obj.get("formValue")
+                if isinstance(form_val_raw, str) and form_val_raw.strip():
+                    try:
+                        form_json = json.loads(form_val_raw)
+                        forms_dict = form_json.get("forms", {})
+                        if isinstance(forms_dict, dict):
+                            for _, f_data in forms_dict.items():
+                                table_rows = f_data.get("Table", []) if isinstance(f_data, dict) else []
+                                for row in table_rows:
+                                    if isinstance(row, dict):
+                                        cat = str(row.get("category") or "").strip()
+                                        desc = str(row.get("description") or "").strip()
+                                        qty = row.get("qty") or ""
+                                        unit = str(row.get("unit") or "").strip()
+                                        if cat:
+                                            item_line = f"{cat}"
+                                            if qty != "":
+                                                item_line += f" (SL: {qty} {unit})".strip()
+                                            if desc and desc.lower() != cat.lower():
+                                                item_line += f" - {desc[:120]}"
+                                            extracted_items.append(item_line)
+                    except Exception:
+                        pass
     except Exception:
         pass
-    return ""
+
+    return extracted_items, attached_files, detail_raw_lower
 
 # ==============================================================================
-# 8. TRÍCH XUẤT & LÀM MỚI RECAPTCHA TOKEN TỪ SESSION TRÌNH DUYỆT
+# 7. TRÍCH XUẤT & LÀM MỚI RECAPTCHA TOKEN TỪ SESSION TRÌNH DUYỆT
 # ==============================================================================
 def get_latest_token_from_perf(driver):
     js_get_token = """
@@ -201,7 +313,6 @@ def get_latest_token_from_perf(driver):
     return token;
     """
     return driver.execute_script(js_get_token) or ""
-
 
 def refresh_session_token(driver, kw_hint="y tế"):
     driver.execute_script("window.performance.clearResourceTimings();")
@@ -225,6 +336,72 @@ def refresh_session_token(driver, kw_hint="y tế"):
     driver.get(f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index")
     time.sleep(8)
     return get_latest_token_from_perf(driver)
+
+# ==============================================================================
+# 8. BỘ LỌC 2 LỚP: LOẠI BỎ YCBG NGOÀI Y TẾ & BẮT YCBG TỔNG DỰ ÁN XÂY MỚI/NÂNG CẤP BV
+# ==============================================================================
+def evaluate_ycbg_medical_relevance(title, investor, extracted_items, attached_files, raw_str):
+    """
+    Đánh giá độ liên quan thực sự đến TBYT, mua sắm/đầu tư PACS hoặc YCBG tổng cho Dự án xây mới/nâng cấp BV:
+    - Bắt trọn YCBG thiết bị lẻ + mua đứt PACS + YCBG tổng cho dự án xây mới/cải tạo nâng cấp bệnh viện.
+    - Loại bỏ tuyệt đối YCBG ngoài ngành y tế (trường học, giao thông, công viên, UBND xã...)
+      và các YCBG thuần THUÊ dịch vụ phần mềm.
+    """
+    title_lower = title.lower()
+    investor_lower = investor.lower()
+    items_lower = " ".join(extracted_items).lower()
+    files_lower = " ".join(attached_files).lower()
+    core_text = f"{title_lower} {investor_lower} {items_lower} {files_lower}"
+
+    # 1. Chốt chặn loại trừ các dự án ngoài ngành y tế hoặc kiểm xạ/khám sức khỏe định kỳ
+    if any(excl in core_text for excl in EXCLUDE_NON_MEDICAL_PATTERNS):
+        return False, False, []
+
+    if any(infra in title_lower for infra in ["cầu đi bộ", "tuyến đường", "khu tái định cư", "hệ thống chiếu sáng", "trụ sở", "nhà văn hóa", "công viên"]):
+        return False, False, []
+
+    # 2. Loại bỏ gói thuần THUÊ dịch vụ phần mềm (không phải mua đứt/đầu tư PACS)
+    is_software_rental = any(r in core_text for r in RENTAL_SOFTWARE_TERMS)
+    is_purchase_action = any(p in core_text for p in ["mua sắm", "mua ", "đầu tư", "cung cấp", "lắp đặt", "trang bị"])
+    if is_software_rental and not is_purchase_action:
+        return False, False, []
+
+    # Nếu chỉ là phần mềm bệnh án điện tử / HIS đơn thuần mà không có PACS hoặc TBYT thì bỏ qua
+    if ("bệnh án điện tử" in core_text or "phần mềm quản lý bệnh viện" in core_text) and not any(
+        p in core_text for p in ["pacs", "ris/pacs", "ris - pacs", "lưu trữ và truyền tải hình ảnh", "thiết bị y tế"]
+    ):
+        return False, False, []
+
+    # 3. Kiểm tra thực thể y tế (Bệnh viện, TTYT, Sở Y tế, hoặc Ban QLDA đầu tư công trình Bệnh viện)
+    has_medical_entity = any(ent in f"{title_lower} {investor_lower}" for ent in MEDICAL_ENTITY_TERMS)
+
+    # 4. Kiểm tra từ khóa thiết bị y tế & PACS đặc thù trên tiêu đề + bảng danh mục hàng hóa
+    search_scope = f"{title_lower} {items_lower}" if items_lower.strip() else raw_str
+    matched_specific = [k for k in SPECIFIC_DEVICE_KEYWORDS if k in search_scope]
+
+    # 5. Kiểm tra từ khóa có điều kiện (CHỈ tính khi thuộc thực thể y tế và xuất hiện trong tiêu đề/danh mục)
+    matched_cond = []
+    if has_medical_entity:
+        for ck in CONDITIONAL_KEYWORDS:
+            if ck in title_lower or ck in items_lower:
+                matched_cond.append(ck)
+
+    # 6. Nhận diện YCBG Tổng thuộc Dự án Xây mới / Cải tạo nâng cấp Công trình Bệnh viện
+    is_hospital_proj_ycbg = False
+    hospital_proj_label = ""
+    if has_medical_entity:
+        matched_actions = [act for act in HOSPITAL_PROJECT_ACTIONS if act in title_lower]
+        # Nếu tiêu đề thuộc công trình BV có hành động đầu tư/xây mới/nâng cấp/cung cấp lắp đặt thiết bị
+        if matched_actions:
+            is_hospital_proj_ycbg = True
+            hospital_proj_label = f"YCBG Dự án công trình BV ({', '.join(matched_actions[:2])})"
+
+    all_matched_tags = list(dict.fromkeys(matched_specific + matched_cond))
+    if is_hospital_proj_ycbg and hospital_proj_label not in all_matched_tags:
+        all_matched_tags.append(hospital_proj_label)
+
+    is_relevant = bool(all_matched_tags)
+    return is_relevant, is_hospital_proj_ycbg, all_matched_tags
 
 # ==============================================================================
 # 9. TRÍCH XUẤT THÔNG TIN YCBG THEO KHUNG THỜI GIAN PHÂN TẦNG (150 - 500)
@@ -259,7 +436,7 @@ def fetch_yccg_today(driver):
     var token = arguments[3];
     var fromDate = arguments[4];
     var toDate = arguments[5];
-    
+
     let url = '/o/egp-portal-contractor-selection-v2/services/smart/search';
     if (token) {
         url += '?token=' + token;
@@ -272,14 +449,14 @@ def fetch_yccg_today(driver):
             index: "es-contractor-selection",
             keyWord: kw,
             matchType: "all-1",
-            matchFields: ["notifyNo", "bidName"],
+            matchFields: ["notifyNo", "bidName", "name"],
             filters: [
-                { fieldName: "type", searchType: "in", fieldValues: ["es-price-req"] },
+                { fieldName: "type", searchType: "in", fieldValues: ["es-ycbg", "es-price-req"] },
                 { fieldName: "publicDate", searchType: "range", from: fromDate, to: toDate }
             ]
         }]
     }];
-    
+
     fetch(url, {
         method: 'POST',
         headers: {
@@ -306,7 +483,7 @@ def fetch_yccg_today(driver):
     """
 
     query_plan = []
-    for kw in KEYWORDS:
+    for kw in SPECIFIC_DEVICE_KEYWORDS:
         query_plan.append((kw, SPECIFIC_MAX_RECORDS))
     for kw in BROAD_QUERIES:
         query_plan.append((kw, BROAD_MAX_RECORDS))
@@ -318,7 +495,7 @@ def fetch_yccg_today(driver):
                 token_val = new_tok
             api_calls_since_refresh = 0
 
-        print(f"-> Truy vấn API Smart Search cho: '{kw}' (Mục tiêu tối đa {max_records} bản ghi)...")
+        print(f"-> Truy vấn API Smart Search YCBG cho: '{kw}' (Mục tiêu tối đa {max_records} bản ghi)...")
         matched_in_kw = 0
         province_in_kw = 0
         fetched_in_kw = 0
@@ -382,22 +559,28 @@ def fetch_yccg_today(driver):
 
                     scanned_codes.add(code)
 
-                    price_req_id = str(item.get("id") or "")
+                    req_id = str(item.get("id") or "")
+                    req_type = str(item.get("type") or "es-ycbg")
                     bid_name_raw = item.get("bidName")
                     if isinstance(bid_name_raw, list) and len(bid_name_raw) > 0:
-                        title = str(bid_name_raw[0])
+                        title = str(bid_name_raw[0]).replace("\n", " ").strip()
                     else:
-                        title = str(bid_name_raw or item.get("name") or "")
-                    investor = str(item.get("investorName") or item.get("procuringEntityName") or "")
+                        title = str(bid_name_raw or item.get("name") or "").replace("\n", " ").strip()
+
+                    investor = str(item.get("investorName") or item.get("procuringEntityName") or "").strip()
                     bid_close_date_str = format_bid_close_date(item)
 
-                    detail_url = (
-                        f"https://{BASE_DOMAIN}/web/guest/contractor-selection?"
-                        f"p_p_id=egpportalcontractorselectionv2_WAR_egpportalcontractorselectionv2"
-                        f"&p_p_lifecycle=0&p_p_state=normal&p_p_mode=view"
-                        f"&_egpportalcontractorselectionv2_WAR_egpportalcontractorselectionv2_render=detail-v2"
-                        f"&type=es-price-req&stepCode=price-req-step-1&id={price_req_id}&notifyNo={code}"
-                    ) if price_req_id else f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index"
+                    if req_id:
+                        step_code = "price-req-step-1" if req_type == "es-price-req" else "request-quote-step-1"
+                        detail_url = (
+                            f"https://{BASE_DOMAIN}/web/guest/contractor-selection?"
+                            f"p_p_id=egpportalcontractorselectionv2_WAR_egpportalcontractorselectionv2"
+                            f"&p_p_lifecycle=0&p_p_state=normal&p_p_mode=view"
+                            f"&_egpportalcontractorselectionv2_WAR_egpportalcontractorselectionv2_render=detail-v2"
+                            f"&type={req_type}&stepCode={step_code}&id={req_id}&notifyNo={code}"
+                        )
+                    else:
+                        detail_url = f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index"
 
                     raw_str = json.dumps(item, ensure_ascii=False).lower()
 
@@ -407,25 +590,67 @@ def fetch_yccg_today(driver):
 
                     province_in_kw += 1
 
-                    if price_req_id:
-                        detail_str = get_yccg_form_values(driver, price_req_id, token_val)
+                    extracted_items = []
+                    attached_files = []
+                    if req_id:
+                        extracted_items, attached_files, detail_str = get_yccg_detail_values(
+                            driver, req_id, req_type, token_val
+                        )
                         if detail_str:
                             raw_str += " " + detail_str
 
-                    matched_kws = [k for k in KEYWORDS if k.lower() in raw_str]
-                    if matched_kws:
+                    is_relevant, is_hospital_proj_ycbg, kw_tags = evaluate_ycbg_medical_relevance(
+                        title, investor, extracted_items, attached_files, raw_str
+                    )
+
+                    if is_relevant:
                         matched_in_kw += 1
-                        location_detail = "Tiêu đề" if any(k.lower() in f"{code} {title}".lower() for k in matched_kws) else "Biểu mẫu Mời chào giá"
+                        final_kw_str = ", ".join(kw_tags)
+
+                        if "thẩm định giá" in title.lower():
+                            stage_label = "Tiền dự án (Thẩm định giá)"
+                        elif is_hospital_proj_ycbg:
+                            stage_label = "YCBG Tổng (Dự án Xây mới / Nâng cấp BV)"
+                        else:
+                            stage_label = "Mời báo giá (YCBG)"
+
+                        # Tự động gắn Note nếu là YCBG tổng dự án BV hoặc danh mục nằm trong file PDF/Excel đính kèm
+                        auto_note = ""
+                        if is_hospital_proj_ycbg and not extracted_items:
+                            auto_note = "YCBG tổng công trình BV (danh mục chi tiết trong file đính kèm) - Tải hồ sơ để chào cấu hình sớm"
+                        elif is_hospital_proj_ycbg:
+                            auto_note = "YCBG tổng dự án xây mới/nâng cấp BV - Theo dõi sát để chào thầu"
+                        elif not extracted_items and attached_files:
+                            auto_note = f"Danh mục hàng hóa đính kèm file: {', '.join(attached_files[:2])}"
+
+                        header_text = f"{code} {title}".lower()
+                        location_detail = (
+                            "Tiêu đề"
+                            if (any(k.lower() in header_text for k in kw_tags) or is_hospital_proj_ycbg)
+                            else "Biểu mẫu Mời chào giá"
+                        )
+
+                        snippet_parts = []
+                        if extracted_items:
+                            snippet_parts.append("Danh mục hàng hóa: " + " ; ".join(extracted_items[:15]))
+                        if attached_files:
+                            snippet_parts.append("File đính kèm: " + ", ".join(attached_files))
+                        snippet_text = " | ".join(snippet_parts) if snippet_parts else raw_str[:1200]
+
                         unique_matches[code] = {
                             "code": code,
+                            "stage": stage_label,
                             "title": title,
                             "investor": investor,
                             "province": ", ".join(matched_province),
                             "bid_close_date": bid_close_date_str,
-                            "matched_kw": ", ".join(matched_kws),
+                            "matched_kw": final_kw_str,
                             "location": location_detail,
+                            "auto_note": auto_note,
+                            "quote_items": extracted_items[:25],
+                            "attached_files": attached_files,
                             "detail_url": detail_url,
-                            "snippet": raw_str[:1200]
+                            "snippet": snippet_text[:1500]
                         }
 
                 if len(data_list) < current_page_size:
@@ -440,38 +665,49 @@ def fetch_yccg_today(driver):
                 break
 
         total_label = f"/{total_elements}" if isinstance(total_elements, int) else ""
-        print(f"    + Đã tải {fetched_in_kw}{total_label} YCBG (thuộc 14 tỉnh: {province_in_kw}) -> Khớp từ khóa y tế: {matched_in_kw} gói.")
+        print(f"    + Đã tải {fetched_in_kw}{total_label} YCBG (thuộc 14 tỉnh: {province_in_kw}) -> Khớp TBYT / PACS / Dự án BV: {matched_in_kw} gói.")
         time.sleep(0.35)
 
+    print(f"=== TỔNG KẾT QUÉT YCBG 14 TỈNH/TP: {len(unique_matches)} GÓI SẠCH KHỚP TIÊU CHÍ ===")
     return list(unique_matches.values())
 
 # ==============================================================================
-# 10. PHÂN TÍCH VỚI GEMINI AI (PHÂN LOẠI GIAI ĐOẠN & NHÓM BU)
+# 10. PHÂN TÍCH VỚI GEMINI AI (HẬU KIỂM + PHÂN LOẠI GIAI ĐOẠN & NHÓM BU)
 # ==============================================================================
-def analyze_with_gemini(candidates):
+def analyze_batch_with_gemini(batch_items):
     global current_key_index, GEMINI_API_KEYS
-    if not candidates or not GEMINI_API_KEYS:
-        return candidates
-
     from google import genai
     from google.genai import types
 
-    models_to_try = [PRIMARY_MODEL, FALLBACK_MODEL, "gemini-3.8-pro"]
+    models_to_try = [
+        PRIMARY_MODEL,
+        FALLBACK_MODEL,
+        "gemini-2.5-pro",
+        "gemini-2.0-flash"
+    ]
 
     prompt = f"""
-Bạn là chuyên gia phân tích dữ liệu Báo giá Trang thiết bị Y tế.
-Dưới đây là danh sách các Yêu cầu báo giá (YCBG) phát hành từ {START_TIME.strftime('%H:%M %d/%m/%Y')} đến {TODAY_STR} đã lọc theo địa phương và từ khóa y tế.
+Bạn là chuyên gia thẩm định dữ liệu Yêu cầu báo giá (YCBG) Trang thiết bị Y tế, Hệ thống PACS và Dự án đầu tư xây dựng Bệnh viện.
+Dưới đây là danh sách các YCBG phát hành từ {START_TIME.strftime('%H:%M %d/%m/%Y')} đến {TODAY_STR} tại 14 tỉnh/thành phố phụ trách.
 
-Yêu cầu:
-1. Giữ nguyên toàn bộ danh sách đầu vào và mọi thuộc tính gốc.
-2. Viết 1 câu tóm tắt ngắn gọn danh mục hàng hóa chính cần báo giá vào trường "reason".
-3. Thêm trường "stage": ghi "Tiền dự án (Thẩm định giá)" nếu nội dung là mời thẩm định giá, ngược lại ghi "Mời báo giá (YCCG)".
-4. Thêm trường "bu_group": phân loại vào 1 trong các nhóm [Nội soi - Tiêu hóa, Phòng mổ - Gây mê, Hồi sức - Giường bệnh, Tiệt trùng, Khí y tế, Vật tư & Khác].
-5. Trả về đúng mảng JSON thuần túy (không kèm markdown).
+Yêu cầu BẮT BUỘC:
+1. Giữ nguyên toàn bộ thuộc tính gốc của từng phần tử trong danh sách đầu vào.
+2. Thêm trường boolean "is_medical_relevant":
+   - Đặt true NẾU YCBG này liên quan đến mua sắm/sửa chữa Trang thiết bị y tế, vật tư y tế, MUA SẮM/ĐẦU TƯ hệ thống PACS (RIS/PACS), hoặc YCBG tổng cho dự án xây mới/cải tạo nâng cấp Bệnh viện / Trung tâm y tế / Cơ sở khám chữa bệnh.
+   - Đặt false nếu đây là YCBG ngoài ngành y tế (trường học, giao thông, công viên, UBND xã, công an, điện lực, di tích) hoặc chỉ là thuê dịch vụ phần mềm hành chính/EMR không có mua sắm PACS/TBYT.
+3. Viết tóm tắt ngắn gọn, rõ ràng danh mục thiết bị / hệ thống PACS / quy mô gói chào giá công trình bệnh viện vào trường "reason" (nếu có số lượng hàng hóa trong "quote_items" hoặc tên file đính kèm trong "attached_files", hãy nêu rõ).
+4. Giữ nguyên hoặc chuẩn hóa trường "stage":
+   - "YCBG Tổng (Dự án Xây mới / Nâng cấp BV)" nếu là báo giá tổng cho công trình bệnh viện xây mới/cải tạo nâng cấp.
+   - "Tiền dự án (Thẩm định giá)" nếu là mời thẩm định giá thiết bị y tế.
+   - "Mời báo giá (YCBG)" cho các gói mời báo giá thiết bị/vật tư/PACS thông thường.
+5. Thêm trường "bu_group": phân loại vào 1 trong các nhóm [Dự án Xây mới / Nâng cấp BV, Nội soi - Tiêu hóa, Phòng mổ - Gây mê, Hồi sức - Giường bệnh, Tiệt trùng, Khí y tế, Chẩn đoán hình ảnh, Vật tư & Khác].
+6. Trả về đúng mảng JSON thuần túy (không kèm markdown).
 
 Danh sách:
-{json.dumps(candidates, ensure_ascii=False, indent=2)}
+{json.dumps(batch_items, ensure_ascii=False, indent=2)}
 """
+
+    retry_delays = [8, 15, 25]
 
     for model_name in models_to_try:
         key_idx = current_key_index
@@ -479,7 +715,7 @@ Danh sách:
             key = GEMINI_API_KEYS[key_idx]
             client = genai.Client(api_key=key)
 
-            for attempt in range(2):
+            for attempt in range(len(retry_delays)):
                 try:
                     response = client.models.generate_content(
                         model=model_name,
@@ -488,7 +724,9 @@ Danh sách:
                     )
                     if response and response.text:
                         current_key_index = key_idx
-                        return json.loads(response.text.strip())
+                        parsed = json.loads(response.text.strip())
+                        if isinstance(parsed, list):
+                            return [x for x in parsed if x.get("is_medical_relevant", True) is not False]
                 except Exception as e:
                     error_msg = str(e)
                     print(f"[CẢNH BÁO AI GOOGLE-GENAI ({model_name})] {error_msg}")
@@ -504,9 +742,10 @@ Danh sách:
                         break
 
                     if "503" in error_msg or "unavailable" in error_msg.lower():
-                        if attempt == 0:
-                            print(f"⏳ Model {model_name} đang quá tải, thử lại sau 10s...")
-                            time.sleep(10)
+                        if attempt < len(retry_delays) - 1:
+                            wait_sec = retry_delays[attempt]
+                            print(f"⏳ Model {model_name} đang quá tải (503), thử lại lần {attempt + 2} sau {wait_sec}s...")
+                            time.sleep(wait_sec)
                             continue
                         key_idx = len(GEMINI_API_KEYS)
                         break
@@ -514,7 +753,24 @@ Danh sách:
                     key_idx = len(GEMINI_API_KEYS)
                     break
 
-    return candidates
+    return batch_items
+
+def analyze_with_gemini(candidates):
+    if not candidates or not GEMINI_API_KEYS:
+        return candidates
+
+    batch_size = 15
+    analyzed_results = []
+    for i in range(0, len(candidates), batch_size):
+        batch = candidates[i:i + batch_size]
+        print(f"   Đang phân tích & thẩm định AI lô {i // batch_size + 1} ({len(batch)} YCBG)...")
+        analyzed_batch = analyze_batch_with_gemini(batch)
+        if isinstance(analyzed_batch, list):
+            analyzed_results.extend(analyzed_batch)
+        else:
+            analyzed_results.extend(batch)
+        time.sleep(1)
+    return analyzed_results
 
 # ==============================================================================
 # 11. GỬI EMAIL BÁO CÁO
@@ -529,33 +785,41 @@ def send_email_report(matched_list):
         print("[LỖI CẤU HÌNH] Danh sách email nhận không hợp lệ.")
         return
 
-    email_subject = f"[YCBG TBYT - Địa bàn phụ trách] Báo cáo gói chào giá ({START_TIME.strftime('%H:%M %d/%m')} - {TODAY_STR})"
+    matched_list_sorted = sorted(matched_list, key=lambda x: x.get("province", ""))
+    email_subject = f"[YCBG TBYT & Dự Án BV - Địa bàn phụ trách] Phát hiện {len(matched_list_sorted)} gói chào giá ({START_TIME.strftime('%H:%M %d/%m')} - {TODAY_STR})"
 
-    if not matched_list:
+    if not matched_list_sorted:
         html_body = f"""
         <div style="font-family: Arial, sans-serif; padding: 20px;">
             <h3 style="color: #d9534f;">BÁO CÁO YÊU CẦU BÁO GIÁ (YCBG)</h3>
-            <p>Hệ thống đã quét dữ liệu từ <b>{START_TIME.strftime('%H:%M %d/%m/%Y')}</b> đến <b>{TODAY_STR}</b> nhưng chưa phát hiện gói chào giá mới khớp từ khóa y tế tại 14 địa phương theo dõi.</p>
+            <p>Hệ thống đã quét dữ liệu từ <b>{START_TIME.strftime('%H:%M %d/%m/%Y')}</b> đến <b>{TODAY_STR}</b> nhưng chưa phát hiện gói chào giá mới khớp tiêu chí tại 14 địa phương theo dõi.</p>
         </div>
         """
     else:
         rows = ""
-        for idx, item in enumerate(matched_list, 1):
+        for idx, item in enumerate(matched_list_sorted, 1):
             code = item.get("code", "")
+            stage = item.get("stage", "Mời báo giá (YCBG)")
             title = item.get("title", "")
             investor = item.get("investor", "")
             province = item.get("province", "Theo dõi")
             bid_close_date = item.get("bid_close_date", "Chưa xác định")
             location = item.get("location", "Biểu mẫu Mời chào giá")
-            reason = item.get("reason") or "Khớp từ khóa theo dõi y tế trong biểu mẫu YCBG"
+            auto_note = item.get("auto_note", "")
+            quote_items = item.get("quote_items", [])
+            reason = item.get("reason") or (" ; ".join(quote_items[:5]) if quote_items else "Khớp tiêu chí theo dõi y tế")
+            if auto_note and auto_note not in reason:
+                reason += f"<br><b style='color:#d9534f;'>Note: {auto_note}</b>"
             matched_kw = item.get("matched_kw", "")
             detail_url = item.get("detail_url") or f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index"
-            
+
+            code_block = f"<b>{code}</b><br><span style='font-size:11px; color:#2e7d32; font-weight:bold;'>[{stage}]</span>"
+
             rows += f"""
             <tr>
                 <td align="center">{idx}</td>
-                <td><b>{code}</b></td>
-                <td>{title}</td>
+                <td>{code_block}</td>
+                <td><b>{title}</b></td>
                 <td>{investor}</td>
                 <td align="center"><b><span style="color: #d9534f;">{province}</span></b></td>
                 <td align="center"><b style="color: #2e7d32;">{bid_close_date}</b></td>
@@ -565,21 +829,21 @@ def send_email_report(matched_list):
                 <td align="center"><a href="{detail_url}" target="_blank" style="color: #0275d8; font-weight: bold;">Xem ngay</a></td>
             </tr>
             """
-            
+
         html_body = f"""
         <div style="font-family: Arial, sans-serif; padding: 20px;">
             <h2 style="color: #0275d8;">BÁO CÁO YÊU CẦU BÁO GIÁ (YCBG)</h2>
             <p>Khung thời gian quét: từ <b>{START_TIME.strftime('%H:%M %d/%m/%Y')}</b> đến <b>{TODAY_STR}</b></p>
-            <p>Đã lọc phát hiện <b>{len(matched_list)}</b> gói chào giá Y tế thuộc địa bàn phụ trách:</p>
+            <p>Đã lọc phát hiện <b>{len(matched_list_sorted)}</b> gói chào giá (TBYT, PACS & Dự án xây mới/nâng cấp BV) thuộc địa bàn phụ trách:</p>
             <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%; border-color: #ddd;">
                 <tr style="background-color: #f2f8ff;">
                     <th align="center">STT</th>
-                    <th>Mã YCBG</th>
+                    <th>Mã YCBG / Giai Đoạn</th>
                     <th>Nội Dung Yêu Cầu</th>
                     <th>Đơn Vị Yêu Cầu</th>
                     <th align="center">Tỉnh / TP</th>
                     <th align="center">Hạn Nộp Báo Giá</th>
-                    <th align="center">Từ Khóa Khớp</th>
+                    <th align="center">Tiêu Chí Khớp</th>
                     <th align="center">Vị Trí Khớp</th>
                     <th>Phân Tích Chi Tiết</th>
                     <th align="center">Chi Tiết</th>
@@ -599,12 +863,12 @@ def send_email_report(matched_list):
             with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
                 server.login(SENDER_EMAIL, SENDER_PASSWORD)
                 server.sendmail(SENDER_EMAIL, receiver_list, msg.as_string())
-            print(f"[SUCCESS] Đã gửi báo cáo thành công tới các email: {', '.join(receiver_list)}!")
+            print(f"[SUCCESS] Đã gửi báo cáo YCBG ({len(matched_list_sorted)} gói) tới: {', '.join(receiver_list)}!")
         except Exception as e:
             print(f"[LỖI GỬI EMAIL SMTP] {e}")
 
 def main():
-    print(f"=== CRAWL & DEEP-SCAN YCBG (Khung quét: {START_TIME.strftime('%H:%M %d/%m/%Y')} -> {TODAY_STR}) ===")
+    print(f"=== CRAWL & DEEP-SCAN YCBG 14 TỈNH/TP (Khung quét: {START_TIME.strftime('%H:%M %d/%m/%Y')} -> {TODAY_STR}) ===")
     driver = init_driver()
     try:
         matched_list = fetch_yccg_today(driver)
