@@ -1,53 +1,45 @@
-name: Auto Crawl YCBG Hang Ngay
+name: Auto Crawl YCBG TBYT & Du An BV
 
 on:
   schedule:
-    # Chạy tự động lúc 06:00 sáng và 20:30 tối giờ Việt Nam (23:00 và 13:30 UTC)
+    # Chạy tự động lúc 06:00 sáng và 20:30 tối hàng ngày (giờ Việt Nam UTC+7)
     - cron: '0 23 * * *'
     - cron: '30 13 * * *'
   workflow_dispatch:
 
 permissions:
-  contents: read
   actions: read
+  contents: read
 
 jobs:
-  crawl-ycbg:
+  crawl-and-sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
 
     steps:
-      - name: Tải mã nguồn từ GitHub
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Cài đặt Python 3.11
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Cài đặt trình duyệt Google Chrome
-        uses: browser-actions/setup-chrome@v1
-        with:
-          chrome-version: stable
-
-      - name: Cài đặt thư viện Python
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install selenium webdriver-manager google-genai gspread google-auth
+          pip install -r requirements.txt
+          pip install gspread google-auth google-genai selenium webdriver-manager
 
-      - name: Lấy mốc thời gian lần chạy tự động (schedule) thành công gần nhất
+      - name: Lấy mốc thời gian lần chạy tự động thành công gần nhất
         id: get_last_run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          LAST_RUN=$(gh api \
-            -H "Accept: application/vnd.github+json" \
-            "/repos/${{ github.repository }}/actions/workflows/daily_crawl.yml/runs?event=schedule&status=success&per_page=1" \
-            --jq '.workflow_runs[0].created_at // empty')
+          LAST_RUN=$(gh api "repos/${{ github.repository }}/actions/workflows/daily_crawl.yml/runs?event=schedule&status=success&per_page=1" --jq '.workflow_runs[0].created_at // empty')
           echo "last_run=$LAST_RUN" >> $GITHUB_OUTPUT
-          echo "Mốc lịch chạy tự động YCCG thành công gần nhất: $LAST_RUN"
+          echo "Mốc thời gian lần chạy trước: $LAST_RUN"
 
-      - name: Chạy Bot YCBG (Bước 1 - Quét & Phân tích AI)
+      - name: Chạy BOT YCBG (Quét, Lọc Trùng GSheet, Phân Tích AI & Gửi Email)
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
@@ -55,10 +47,13 @@ jobs:
           RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
           LAST_RUN_TIMESTAMP: ${{ steps.get_last_run.outputs.last_run }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
         run: python crawl_ycbg.py
 
-      - name: Sync to Google Sheets (Bước 2 - Ghi dữ liệu mới không trùng)
+      - name: Đồng bộ dữ liệu mới lên Google Sheets
+        if: always()
         env:
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
           GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
-        run: python sync_to_gsheet.py YCCG
+        run: python sync_to_gsheet.py
