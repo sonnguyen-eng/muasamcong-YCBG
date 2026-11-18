@@ -14,32 +14,37 @@ permissions:
 jobs:
   crawl-and-sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout repository
+      - name: Tải mã nguồn từ GitHub
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Cài đặt Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Cài đặt trình duyệt Google Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Cài đặt thư viện Python
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install gspread google-auth google-genai selenium webdriver-manager
 
       - name: Lấy mốc thời gian lần chạy tự động thành công gần nhất
         id: get_last_run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          LAST_RUN=$(gh api "repos/${{ github.repository }}/actions/workflows/daily_crawl.yml/runs?event=schedule&status=success&per_page=1" --jq '.workflow_runs[0].created_at // empty')
+          LAST_RUN=$(gh api "repos/${{ github.repository }}/actions/workflows/auto_run.yml/runs?event=schedule&status=success&per_page=1" --jq '.workflow_runs[0].created_at // empty')
           echo "last_run=$LAST_RUN" >> $GITHUB_OUTPUT
-          echo "Mốc thời gian lần chạy trước: $LAST_RUN"
+          echo "Mốc lịch chạy tự động YCBG thành công gần nhất: $LAST_RUN"
 
-      - name: Chạy BOT YCBG (Quét, Lọc Trùng GSheet, Phân Tích AI & Gửi Email)
+      - name: Chạy BOT YCBG (Bước 1 - Quét, Lọc Trùng GSheet, Phân Tích AI & Gửi Email)
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
@@ -49,9 +54,9 @@ jobs:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
           GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
-        run: python crawl_ycbg.py
+        run: python main_bot.py
 
-      - name: Đồng bộ dữ liệu mới lên Google Sheets
+      - name: Sync to Google Sheets (Bước 2 - Ghi dữ liệu mới không trùng)
         if: always()
         env:
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
