@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import json
 import smtplib
@@ -14,7 +15,7 @@ from selenium.webdriver.common.keys import Keys
 from webdriver_manager.chrome import ChromeDriverManager
 
 # ==============================================================================
-# 1. CẤU HÌNH BIẾN MÔI TRƯỜNG & BỘ TỪ KHÓA LỌC CHÍNH XÁC Y TẾ / PACS / DỰ ÁN BV
+# 1. CẤU HÌNH BIẾN MÔI TRƯỜNG & BỘ TỪ KHÓA LỌC CHÍNH XÁC TBYT / PACS / DỰ ÁN BV
 # ==============================================================================
 RAW_GEMINI_KEYS = os.environ.get("GEMINI_API_KEY", "").strip()
 GEMINI_API_KEYS = [k.strip() for k in RAW_GEMINI_KEYS.split(",") if k.strip()]
@@ -45,17 +46,17 @@ SPECIFIC_DEVICE_KEYWORDS = [
     "máy siêu âm", "siêu âm màu", "siêu âm chẩn đoán", "thận nhân tạo",
     "máy chạy thận", "hdf online",
     "pacs", "ris/pacs", "ris - pacs", "lưu trữ và truyền tải hình ảnh",
-    # Gói mua sắm / chào giá thiết bị y tế tổng thể
+    # Gói mua sắm / sửa chữa / chào giá thiết bị y tế tổng thể
     "thiết bị y tế chuyên môn", "thiết bị y tế chuyên dùng",
     "thiết bị y tế cấp thiết", "mua sắm thiết bị chuyên môn",
     "mua sắm thiết bị y tế", "mua thiết bị y tế",
     "cung cấp, lắp đặt thiết bị y tế", "cung cấp lắp đặt thiết bị y tế",
-    "trang thiết bị y tế"
+    "trang thiết bị y tế", "sửa chữa thiết bị y tế", "sửa chữa máy"
 ]
 
 # Nhóm 2: Từ khóa có điều kiện (CHỈ khớp khi đi kèm đơn vị/công trình ngành Y tế)
 CONDITIONAL_KEYWORDS = [
-    "thẩm định giá", "chẩn đoán hình ảnh", "phục hồi chức năng"
+    "thẩm định giá", "chẩn đoán hình ảnh"
 ]
 
 # Thực thể / Công trình thuộc ngành Y tế
@@ -66,30 +67,41 @@ MEDICAL_ENTITY_TERMS = [
     "trung tâm y khoa", "trạm y tế", "y tế khu vực"
 ]
 
-# Hành động YCBG tổng cho dự án xây mới / cải tạo nâng cấp công trình BV
+# Hành động YCBG tổng cho dự án xây mới / nâng cấp công trình BV quy mô lớn
 HOSPITAL_PROJECT_ACTIONS = [
-    "xây dựng mới", "nâng cấp", "cải tạo, sửa chữa", "cải tạo sửa chữa",
+    "xây dựng mới", "nâng cấp", "cải tạo, nâng cấp", "cải tạo nâng cấp",
     "dự án đầu tư", "xây dựng khối", "xây dựng khu",
     "cung cấp, lắp đặt thiết bị", "cung cấp lắp đặt thiết bị",
     "mua sắm thiết bị", "trang bị thiết bị"
 ]
 
-# Từ khóa loại trừ các dự án ngoài ngành y tế hoặc kiểm xạ/khám sức khỏe định kỳ
+# Từ khóa loại trừ các dự án ngoài ngành y tế, dịch vụ thuê/khám sức khỏe, duy tu nhỏ
 EXCLUDE_NON_MEDICAL_PATTERNS = [
     "thẩm định giá đất", "thi hành bản án", "tuần tra, kiểm tra rừng",
     "dây chuyền kiểm định phương tiện", "cầu đi bộ", "tái định cư",
     "công viên", "nhà văn hóa", "trường tiểu học", "trường thcs", "trường thpt",
     "cao đẳng kỹ thuật", "trụ sở văn phòng", "hệ thống chiếu sáng",
     "mở rộng, nâng cấp tuyến đường", "kiểm định máy x-quang",
-    "kiểm xạ an toàn", "liều kế cá nhân", "khám sức khỏe định kỳ"
+    "kiểm xạ an toàn", "liều kế cá nhân", "khám sức khỏe",
+    "dịch vụ chụp x-quang", "xe lưu động", "ốp gạch", "sơn tường",
+    "chống thấm", "lợp mái", "vệ sinh công nghiệp", "giặt là", "cây xanh"
 ]
 
-# Cụm từ nhận diện gói THUÊ PACS / thuê dịch vụ phần mềm (loại trừ tuyệt đối)
-RENTAL_PACS_OR_SOFTWARE_TERMS = [
+# Cụm từ nhận diện gói VẬT TƯ TIÊU HAO thuần túy (không phải thiết bị y tế)
+CONSUMABLE_MEDICAL_TERMS = [
+    "phim x-quang", "phim chụp", "bơm, kim tiêm", "bơm kim tiêm",
+    "dây truyền", "găng tay", "bông, dung dịch", "băng, gạc",
+    "vật tư tiêu hao", "hóa chất xét nghiệm", "sinh phẩm",
+    "vật tư y tế sử dụng trong"
+]
+
+# Cụm từ nhận diện gói THUÊ PACS / THUÊ THIẾT BỊ / THUÊ PHẦN MỀM (loại trừ tuyệt đối)
+RENTAL_TERMS = [
     "thuê dịch vụ sử dụng phần mềm", "thuê dịch vụ phần mềm",
     "thuê dịch vụ hệ thống", "thuê hệ thống ris", "thuê hệ thống pacs",
     "thuê hệ thống phần mềm", "thuê phần mềm", "thuê pacs", "thuê ris/pacs",
     "dịch vụ hệ thống thông tin", "ca chụp/tháng",
+    "thuê máy", "cho thuê máy", "thuê thiết bị", "cho thuê thiết bị",
     "sl: 12 tháng", "sl: 24 tháng", "sl: 36 tháng", "sl: 6 tháng"
 ]
 
@@ -147,7 +159,7 @@ SPECIFIC_MAX_RECORDS = 150
 BROAD_MAX_RECORDS = 500
 
 # ==============================================================================
-# 3. KHỞI TẠO CHROME HEADLESS
+# 3. KHỞI TẠO CHROME HEADLESS & ĐỌC LỊCH SỬ CHỐNG TRÙNG TỪ GOOGLE SHEET
 # ==============================================================================
 def init_driver():
     chrome_options = Options()
@@ -162,6 +174,35 @@ def init_driver():
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     )
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+
+def get_existing_codes_from_gsheet():
+    gsheet_id = os.environ.get("GSHEET_ID", "").strip()
+    sa_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON", "").strip()
+    if not gsheet_id or not sa_json:
+        return set()
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+
+        creds_dict = json.loads(sa_json)
+        scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(gsheet_id)
+
+        existing_codes = set()
+        for ws in sh.worksheets():
+            all_vals = ws.get_all_values()
+            for row in all_vals[1:]:
+                for cell in row[:4]:
+                    val = str(cell).strip()
+                    if val.startswith(("PL", "RQ", "PR", "IB")):
+                        existing_codes.add(val)
+        print(f"-> Đã tải {len(existing_codes)} mã YCBG lịch sử từ Google Sheet để chống trùng.")
+        return existing_codes
+    except Exception as e:
+        print(f"[CẢNH BÁO ĐỌC LỊCH SỬ GSHEET] {e}")
+        return set()
 
 # ==============================================================================
 # 4. LỌC THỜI GIAN ĐĂNG & ĐỊNH DẠNG HẠN NỘP BÁO GIÁ
@@ -336,9 +377,35 @@ def refresh_session_token(driver, kw_hint="y tế"):
     return get_latest_token_from_perf(driver)
 
 # ==============================================================================
-# 8. BỘ LỌC 2 LỚP: LOẠI BỎ YCBG NGOÀI Y TẾ & THUÊ PACS; BẮT MUA PACS & DỰ ÁN BV
+# 8. BỘ LỌC 2 LỚP: LOẠI BỎ VẬT TƯ TIÊU HAO, THUÊ MÁY/PACS, DUY TU NHỎ; BẮT TBYT
 # ==============================================================================
-def evaluate_ycbg_medical_relevance(title, investor, extracted_items, attached_files, raw_str):
+def is_consumable_item(text_lower):
+    return any(c in text_lower for c in CONSUMABLE_MEDICAL_TERMS)
+
+def is_rental_item(text_lower):
+    if any(r in text_lower for r in RENTAL_TERMS):
+        return True
+    if re.search(r"\bthuê\s+\d*\s*(máy|thiết bị|hệ thống)", text_lower):
+        return True
+    return False
+
+def is_equipment_item(text_lower):
+    if is_consumable_item(text_lower) or is_rental_item(text_lower):
+        return False
+    if any(excl in text_lower for excl in EXCLUDE_NON_MEDICAL_PATTERNS):
+        return False
+    equipment_terms = [
+        "thiết bị y tế", "trang thiết bị y tế", "nội soi", "ống soi", "bàn mổ", "đèn mổ",
+        "gây mê", "hồi sức", "giường icu", "giường cấp cứu", "giường đa năng",
+        "giường bệnh", "máy x-quang", "hệ thống x-quang", "c-arm", "c arm",
+        "máy siêu âm", "máy thở", "tán sỏi", "khí y tế", "oxy lỏng", "oxy trung tâm",
+        "tiệt trùng", "monitor", "sơ sinh", "thận nhân tạo", "máy chạy thận",
+        "robot phẫu thuật", "pacs", "ris/pacs", "lưu trữ và truyền tải hình ảnh",
+        "sửa chữa thiết bị y tế", "sửa chữa máy"
+    ]
+    return any(t in text_lower for t in equipment_terms)
+
+def evaluate_ycbg_medical_relevance(title, investor, extracted_items, equipment_items, attached_files, raw_str):
     title_lower = title.lower()
     investor_lower = investor.lower()
     items_lower = " ".join(extracted_items).lower()
@@ -346,15 +413,26 @@ def evaluate_ycbg_medical_relevance(title, investor, extracted_items, attached_f
     core_text = f"{title_lower} {investor_lower} {items_lower} {files_lower}"
     content_text = f"{title_lower} {items_lower}"
 
-    # 1. Chốt chặn loại trừ các dự án ngoài ngành y tế hoặc kiểm xạ/khám sức khỏe định kỳ
+    # 1. Chốt chặn loại trừ các dự án ngoài ngành y tế, khám sức khỏe, duy tu/ốp gạch/sơn sửa nhỏ
     if any(excl in core_text for excl in EXCLUDE_NON_MEDICAL_PATTERNS):
         return False, False, []
 
     if any(infra in title_lower for infra in ["cầu đi bộ", "tuyến đường", "khu tái định cư", "hệ thống chiếu sáng", "trụ sở", "nhà văn hóa", "công viên"]):
         return False, False, []
 
-    # 2. Loại trừ TUYỆT ĐỐI các gói THUÊ dịch vụ phần mềm / THUÊ PACS (kể cả khi ghi "Dịch vụ hệ thống..." hoặc "SL: 12 Tháng")
-    if any(r in content_text for r in RENTAL_PACS_OR_SOFTWARE_TERMS):
+    # 2. Loại trừ TUYỆT ĐỐI các gói THUÊ máy / THUÊ thiết bị / THUÊ PACS / THUÊ phần mềm
+    if is_rental_item(content_text):
+        return False, False, []
+
+    # 3. Nếu đã bóc tách được danh mục hàng hóa chi tiết mà KHÔNG có thiết bị nào (chỉ toàn vật tư tiêu hao như bông băng, bơm kim tiêm, phim X-quang)
+    if extracted_items and not equipment_items:
+        has_medical_entity = any(ent in f"{title_lower} {investor_lower}" for ent in MEDICAL_ENTITY_TERMS)
+        is_major_hospital_proj = has_medical_entity and any(act in title_lower for act in HOSPITAL_PROJECT_ACTIONS)
+        if not is_major_hospital_proj:
+            return False, False, []
+
+    # Nếu không có danh mục con (chỉ có tiêu đề + file đính kèm) nhưng tiêu đề rõ ràng là vật tư tiêu hao / phim X-quang -> loại
+    if not equipment_items and is_consumable_item(title_lower):
         return False, False, []
 
     # Nếu chỉ là phần mềm bệnh án điện tử / HIS đơn thuần mà không có mua PACS hoặc TBYT thì bỏ qua
@@ -363,21 +441,27 @@ def evaluate_ycbg_medical_relevance(title, investor, extracted_items, attached_f
     ):
         return False, False, []
 
-    # 3. Kiểm tra thực thể y tế
+    # 4. Kiểm tra thực thể y tế
     has_medical_entity = any(ent in f"{title_lower} {investor_lower}" for ent in MEDICAL_ENTITY_TERMS)
 
-    # 4. Kiểm tra từ khóa thiết bị y tế & mua đứt PACS đặc thù
-    search_scope = content_text if items_lower.strip() else raw_str
-    matched_specific = [k for k in SPECIFIC_DEVICE_KEYWORDS if k in search_scope]
+    # 5. Kiểm tra từ khóa thiết bị y tế & mua đứt PACS đặc thù
+    clean_scope = " ".join(equipment_items).lower() if equipment_items else (content_text if items_lower.strip() else raw_str)
+    matched_specific = [k for k in SPECIFIC_DEVICE_KEYWORDS if k in clean_scope]
 
-    # 5. Kiểm tra từ khóa có điều kiện (CHỈ tính khi thuộc thực thể y tế và xuất hiện trong tiêu đề/danh mục)
+    # Loại bỏ khớp nhầm "x-quang" nếu chỉ là "phim x-quang"
+    if "x-quang" in matched_specific and "phim x-quang" in clean_scope and not any(
+        dev in clean_scope for dev in ["máy x-quang", "hệ thống x-quang", "x-quang kỹ thuật số", "x-quang di động", "x-quang cao tần", "c-arm"]
+    ):
+        matched_specific = [k for k in matched_specific if k != "x-quang"]
+
+    # 6. Kiểm tra từ khóa có điều kiện (CHỈ tính khi thuộc thực thể y tế và xuất hiện trong tiêu đề/danh mục)
     matched_cond = []
     if has_medical_entity:
         for ck in CONDITIONAL_KEYWORDS:
             if ck in title_lower or ck in items_lower:
                 matched_cond.append(ck)
 
-    # 6. Nhận diện YCBG Tổng thuộc Dự án Xây mới / Cải tạo nâng cấp Công trình Bệnh viện
+    # 7. Nhận diện YCBG Tổng thuộc Dự án Xây mới / Nâng cấp Công trình Bệnh viện
     is_hospital_proj_ycbg = False
     hospital_proj_label = ""
     if has_medical_entity:
@@ -589,8 +673,10 @@ def fetch_yccg_today(driver):
                         if detail_str:
                             raw_str += " " + detail_str
 
+                    equipment_items = [it for it in extracted_items if is_equipment_item(it.lower())]
+
                     is_relevant, is_hospital_proj_ycbg, kw_tags = evaluate_ycbg_medical_relevance(
-                        title, investor, extracted_items, attached_files, raw_str
+                        title, investor, extracted_items, equipment_items, attached_files, raw_str
                     )
 
                     if is_relevant:
@@ -619,9 +705,10 @@ def fetch_yccg_today(driver):
                             else "Biểu mẫu Mời chào giá"
                         )
 
+                        display_items = equipment_items if equipment_items else extracted_items
                         snippet_parts = []
-                        if extracted_items:
-                            snippet_parts.append("Danh mục hàng hóa: " + " ; ".join(extracted_items[:15]))
+                        if display_items:
+                            snippet_parts.append("Danh mục thiết bị: " + " ; ".join(display_items[:15]))
                         if attached_files:
                             snippet_parts.append("File đính kèm: " + ", ".join(attached_files))
                         snippet_text = " | ".join(snippet_parts) if snippet_parts else raw_str[:1200]
@@ -636,7 +723,7 @@ def fetch_yccg_today(driver):
                             "matched_kw": final_kw_str,
                             "location": location_detail,
                             "auto_note": auto_note,
-                            "quote_items": extracted_items[:25],
+                            "quote_items": display_items[:25],
                             "attached_files": attached_files,
                             "detail_url": detail_url,
                             "snippet": snippet_text[:1500]
@@ -661,7 +748,7 @@ def fetch_yccg_today(driver):
     return list(unique_matches.values())
 
 # ==============================================================================
-# 10. PHÂN TÍCH VỚI GEMINI AI (HẬU KIỂM + PHÂN LOẠI GIAI ĐOẠN & NHÓM BU)
+# 10. PHÂN TÍCH VỚI GEMINI AI (HẬU KIỂM LOẠI BỎ GÓI RÁC + PHÂN LOẠI NHÓM BU)
 # ==============================================================================
 def analyze_batch_with_gemini(batch_items):
     global current_key_index, GEMINI_API_KEYS
@@ -675,20 +762,24 @@ def analyze_batch_with_gemini(batch_items):
     ]
 
     prompt = f"""
-Bạn là chuyên gia thẩm định dữ liệu Yêu cầu báo giá (YCBG) Trang thiết bị Y tế, Hệ thống PACS (chỉ mua đứt/đầu tư, KHÔNG lấy gói thuê) và Dự án đầu tư xây dựng Bệnh viện.
+Bạn là chuyên gia thẩm định dữ liệu Yêu cầu báo giá (YCBG) Trang thiết bị Y tế, Hệ thống PACS (chỉ mua đứt/đầu tư, KHÔNG lấy gói thuê) và Dự án đầu tư xây dựng/nâng cấp Bệnh viện.
 Dưới đây là danh sách các YCBG phát hành từ {START_TIME.strftime('%H:%M %d/%m/%Y')} đến {TODAY_STR} tại 14 tỉnh/thành phố phụ trách.
 
 Yêu cầu BẮT BUỘC:
 1. Giữ nguyên toàn bộ thuộc tính gốc của từng phần tử trong danh sách đầu vào.
 2. Thêm trường boolean "is_medical_relevant":
-   - Đặt true NẾU YCBG này liên quan đến mua sắm/sửa chữa Trang thiết bị y tế, vật tư y tế, MUA SẮM/ĐẦU TƯ hệ thống PACS (RIS/PACS), hoặc YCBG tổng cho dự án xây mới/cải tạo nâng cấp Bệnh viện / Trung tâm y tế / Cơ sở khám chữa bệnh.
-   - Đặt false nếu đây là YCBG ngoài ngành y tế (trường học, giao thông, công viên, UBND xã, công an, điện lực, di tích) HOẶC là gói THUÊ dịch vụ phần mềm / THUÊ hệ thống RIS/PACS (ví dụ thuê 12 tháng, tính phí theo ca chụp/tháng).
+   - Đặt true NẾU YCBG này liên quan đến mua sắm/sửa chữa Trang thiết bị y tế, MUA SẮM/ĐẦU TƯ hệ thống PACS (RIS/PACS), hoặc YCBG tổng cho dự án xây mới/nâng cấp quy mô lớn Bệnh viện / Trung tâm y tế.
+   - Đặt false nếu thuộc một trong các trường hợp sau:
+     + YCBG ngoài ngành y tế (trường học, giao thông, công viên, UBND xã, công an, điện lực).
+     + Gói THUÊ thiết bị y tế, THUÊ hệ thống RIS/PACS, dịch vụ chụp X-quang lưu động phục vụ khám sức khỏe.
+     + Gói mua sắm thuần vật tư y tế tiêu hao (bơm kim tiêm, găng tay, bông băng gạc, phim X-quang, hóa chất xét nghiệm, sinh phẩm).
+     + Gói sửa chữa nhỏ/duy tu cơ sở hạ tầng bệnh viện (ốp gạch, sơn tường, chống thấm, lợp mái).
 3. Viết tóm tắt ngắn gọn, rõ ràng danh mục thiết bị / hệ thống PACS / quy mô gói chào giá công trình bệnh viện vào trường "reason" (nếu có số lượng hàng hóa trong "quote_items" hoặc tên file đính kèm trong "attached_files", hãy nêu rõ).
 4. Giữ nguyên hoặc chuẩn hóa trường "stage":
-   - "YCBG Tổng (Dự án Xây mới / Nâng cấp BV)" nếu là báo giá tổng cho công trình bệnh viện xây mới/cải tạo nâng cấp.
+   - "YCBG Tổng (Dự án Xây mới / Nâng cấp BV)" nếu là báo giá tổng cho công trình bệnh viện xây mới/nâng cấp.
    - "Tiền dự án (Thẩm định giá)" nếu là mời thẩm định giá thiết bị y tế.
-   - "Mời báo giá (YCBG)" cho các gói mời báo giá thiết bị/vật tư/PACS thông thường.
-5. Thêm trường "bu_group": phân loại vào 1 trong các nhóm [Dự án Xây mới / Nâng cấp BV, Nội soi - Tiêu hóa, Phòng mổ - Gây mê, Hồi sức - Giường bệnh, Tiệt trùng, Khí y tế, Chẩn đoán hình ảnh, Vật tư & Khác].
+   - "Mời báo giá (YCBG)" cho các gói mời báo giá thiết bị/PACS thông thường.
+5. Thêm trường "bu_group": phân loại vào 1 trong các nhóm [Dự án Xây mới / Nâng cấp BV, Nội soi - Tiêu hóa, Phòng mổ - Gây mê, Hồi sức - Giường bệnh, Tiệt trùng, Khí y tế, Chẩn đoán hình ảnh, Đa chuyên khoa / TBYT tổng hợp].
 6. Trả về đúng mảng JSON thuần túy (không kèm markdown).
 
 Danh sách:
@@ -860,6 +951,11 @@ def main():
     driver = init_driver()
     try:
         matched_list = fetch_yccg_today(driver)
+        existing_codes = get_existing_codes_from_gsheet()
+        if existing_codes:
+            matched_list = [m for m in matched_list if m.get("code") not in existing_codes]
+            print(f"-> Sau khi đối chiếu chống trùng với Google Sheet: còn {len(matched_list)} YCBG mới hoàn toàn.")
+
         final_matches = analyze_with_gemini(matched_list)
         with open("latest_results.json", "w", encoding="utf-8") as f:
             json.dump(final_matches, f, ensure_ascii=False, indent=2)
