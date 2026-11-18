@@ -1,270 +1,108 @@
 import os
-import sys
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
+
+GSHEET_ID = os.environ.get("GSHEET_ID", "").strip()
+GCP_SERVICE_ACCOUNT_JSON = os.environ.get("GCP_SERVICE_ACCOUNT_JSON", "").strip()
+RESULTS_FILE = "latest_results.json"
 
 TZ_VN = timezone(timedelta(hours=7))
 SYNC_TIME_STR = datetime.now(TZ_VN).strftime("%H:%M %d/%m/%Y")
 
-GSHEET_ID = os.environ.get("GSHEET_ID", "").strip()
-GCP_SA_JSON = os.environ.get("GCP_SERVICE_ACCOUNT_JSON", "").strip()
-INPUT_FILE = "latest_results.json"
-
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
+HEADERS = [
+    "Ngày Đồng Bộ",
+    "Mã YCBG",
+    "Giai Đoạn",
+    "Nhóm BU",
+    "Nội Dung Yêu Cầu",
+    "Đơn Vị Yêu Cầu",
+    "Tỉnh / TP",
+    "Hạn Nộp Báo Giá",
+    "Tiêu Chí Khớp",
+    "Phân Tích & Ghi Chú",
+    "Link Chi Tiết"
 ]
 
-SALES_WORKFLOW_HEADERS = [
-    "Sales Địa Bàn (B02)",
-    "Đăng Ký NSX (B03)",
-    "Go / No-Go (B04)",
-    "Trạng Thái HSDT (B05)",
-    "Kết Quả Thầu (B06)"
-]
-
-SHEET_HEADERS_BY_TAB = {
-    "YCCG": [
-        "Mã YCCG (Key)", "Giai Đoạn", "Ngày Quét", "Tỉnh / TP",
-        "Đơn Vị Yêu Cầu", "Nội Dung Yêu Cầu Báo Giá", "Hạn Nộp Báo Giá",
-        "Từ Khóa Khớp", "Vị Trí Khớp", "BU Gợi Ý",
-        "Tóm Tắt Chi Tiết AI", "Link Chi Tiết"
-    ] + SALES_WORKFLOW_HEADERS,
-
-    "KHLCNT": [
-        "Mã KHLCNT (Key)", "Số Quyết Định", "Giai Đoạn", "Ngày Đăng",
-        "Tỉnh / TP", "Chủ Đầu Tư", "Tên KHLCNT", "Tổng Mức Đầu Tư",
-        "Thời Gian Dự Kiến LCNT", "Từ Khóa Khớp", "Vị Trí Khớp",
-        "BU Gợi Ý", "Tóm Tắt Chi Tiết AI", "Link Chi Tiết"
-    ] + SALES_WORKFLOW_HEADERS,
-
-    "TBMT": [
-        "Mã TBMT (Key)", "Phiên Bản", "Giai Đoạn", "Ngày Quét",
-        "Tỉnh / TP", "Bên Mời Thầu", "Tên Gói Thầu",
-        "Giá Trị Gói Thầu (VND)", "Từ Khóa Khớp", "Vị Trí Khớp",
-        "BU Gợi Ý", "Tóm Tắt Chi Tiết AI", "Link Chi Tiết"
-    ] + SALES_WORKFLOW_HEADERS
-}
-
-# Độ rộng chuẩn (pixel) cho từng cột để hiển thị gọn trên cả máy tính và điện thoại
-COLUMN_WIDTHS_BY_TAB = {
-    "YCCG": [155, 165, 130, 145, 220, 320, 135, 140, 135, 155, 340, 110, 140, 140, 130, 140, 140],
-    "KHLCNT": [155, 130, 165, 130, 145, 220, 320, 145, 145, 140, 135, 155, 340, 110, 140, 140, 130, 140, 140],
-    "TBMT": [155, 85, 165, 130, 145, 220, 320, 150, 140, 135, 155, 340, 110, 140, 140, 130, 140, 140]
-}
-
-
-def connect_gsheet():
-    if not GSHEET_ID or not GCP_SA_JSON:
-        print("[BỎ QUA GSHEET] Chưa cấu hình Secret GSHEET_ID hoặc GCP_SERVICE_ACCOUNT_JSON.")
-        return None
-    try:
-        creds_dict = json.loads(GCP_SA_JSON)
-        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-        client = gspread.authorize(creds)
-        return client.open_by_key(GSHEET_ID)
-    except Exception as e:
-        print(f"[LỖI KẾT NỐI GOOGLE SHEET] {e}")
-        return None
-
-
-def apply_sheet_layout_and_wrap(spreadsheet, ws, tab_name):
-    """Tự động bật xuống dòng (WRAP), căn lề, cố định tiêu đề và đặt độ rộng cột chuẩn."""
-    try:
-        sheet_id = ws.id
-        col_widths = COLUMN_WIDTHS_BY_TAB.get(tab_name, [])
-        num_cols = len(col_widths) or 18
-
-        # 1. Bật tự động xuống dòng (WRAP) và căn trên (TOP) cho toàn bộ ô dữ liệu
-        ws.format(f"A1:{gspread.utils.rowcol_to_a1(2000, num_cols)}", {
-            "wrapStrategy": "WRAP",
-            "verticalAlignment": "TOP"
-        })
-
-        # 2. Định dạng riêng hàng tiêu đề (dòng 1): In đậm, nền xanh nhạt, căn giữa
-        ws.format(f"1:1", {
-            "textFormat": {"bold": True},
-            "backgroundColor": {"red": 0.88, "green": 0.94, "blue": 1.0},
-            "verticalAlignment": "MIDDLE",
-            "wrapStrategy": "WRAP"
-        })
-
-        # 3. Cố định hàng 1 (tiêu đề) và cột A (Mã gói) để lướt trên điện thoại không bị mất dấu
-        ws.freeze(rows=1, cols=1)
-
-        # 4. Cập nhật độ rộng từng cột qua batch_update
-        requests = []
-        for idx, width_px in enumerate(col_widths):
-            requests.append({
-                "updateDimensionProperties": {
-                    "range": {
-                        "sheetId": sheet_id,
-                        "dimension": "COLUMNS",
-                        "startIndex": idx,
-                        "endIndex": idx + 1
-                    },
-                    "properties": {"pixelSize": width_px},
-                    "fields": "pixelSize"
-                }
-            })
-
-        if requests:
-            spreadsheet.batch_update({"requests": requests})
-    except Exception as e:
-        print(f"[CẢNH BÁO FORMAT SHEET] {e}")
-
-
-def get_or_create_tab(spreadsheet, tab_name, headers):
-    try:
-        ws = spreadsheet.worksheet(tab_name)
-    except gspread.WorksheetNotFound:
-        all_sheets = spreadsheet.worksheets()
-        if len(all_sheets) == 1 and not all_sheets[0].get_all_values():
-            ws = all_sheets[0]
-            ws.update_title(tab_name)
-        else:
-            ws = spreadsheet.add_worksheet(title=tab_name, rows=2000, cols=len(headers) + 2)
-
-    existing_first_row = ws.row_values(1)
-    if not existing_first_row:
-        ws.append_row(headers, value_input_option="USER_ENTERED")
-
-    apply_sheet_layout_and_wrap(spreadsheet, ws, tab_name)
-    return ws
-
-
-def build_unique_key(source_type, item):
-    code = str(item.get("code") or "").strip()
-    if not code:
-        return ""
-    if source_type == "TBMT":
-        ver = str(item.get("notify_ver") or "00").strip()
-        return f"{code}-{ver}"
-    return code
-
-
-def format_hyperlink(url):
-    clean_url = str(url or "").strip().replace('"', '%22')
-    if not clean_url:
-        return ""
-    return f'=HYPERLINK("{clean_url}", "Xem chi tiết")'
-
-
-def sync_data(source_type):
-    if source_type not in SHEET_HEADERS_BY_TAB:
-        print(f"[LỖI THAM SỐ] Tên sheet '{source_type}' không hợp lệ (chỉ nhận YCCG, KHLCNT, TBMT).")
+def main():
+    if not os.path.exists(RESULTS_FILE):
+        print("Không tìm thấy file latest_results.json, bỏ qua bước đồng bộ.")
         return
 
-    if not os.path.exists(INPUT_FILE):
-        print(f"[INFO] Không tìm thấy file {INPUT_FILE} từ Bước 1. Dừng đồng bộ.")
-        return
-
-    with open(INPUT_FILE, "r", encoding="utf-8") as f:
+    with open(RESULTS_FILE, "r", encoding="utf-8") as f:
         try:
             records = json.load(f)
         except Exception as e:
-            print(f"[LỖI ĐỌC JSON] {e}")
+            print(f"Lỗi đọc JSON kết quả: {e}")
             return
 
-    if not records or not isinstance(records, list):
-        print(f"[INFO] Không có bản ghi mới nào trong {INPUT_FILE} để ghi lên Google Sheet.")
+    if not records:
+        print("Không có gói YCBG mới nào trong lượt quét này.")
         return
 
-    spreadsheet = connect_gsheet()
-    if not spreadsheet:
+    if not GSHEET_ID or not GCP_SERVICE_ACCOUNT_JSON:
+        print("[LỖI CẤU HÌNH] Thiếu GSHEET_ID hoặc GCP_SERVICE_ACCOUNT_JSON.")
         return
 
-    headers = SHEET_HEADERS_BY_TAB[source_type]
-    ws = get_or_create_tab(spreadsheet, source_type, headers)
+    creds_dict = json.loads(GCP_SERVICE_ACCOUNT_JSON)
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    gc = gspread.authorize(creds)
+    sh = gc.open_by_key(GSHEET_ID)
+    ws = sh.sheet1
 
-    existing_keys = set(k.strip() for k in ws.col_values(1)[1:] if k.strip())
+    existing_values = ws.get_all_values()
+    if not existing_values:
+        ws.append_row(HEADERS, value_input_option="USER_ENTERED")
+        existing_codes = set()
+    else:
+        existing_codes = set()
+        for row in existing_values[1:]:
+            if len(row) > 1 and row[1].strip():
+                existing_codes.add(row[1].strip())
+
     new_rows = []
-    empty_sales_cols = ["", "", "", "", ""]
-
     for item in records:
-        u_key = build_unique_key(source_type, item)
-        if not u_key or u_key in existing_keys:
+        code = str(item.get("code", "")).strip()
+        if not code or code in existing_codes:
             continue
+        existing_codes.add(code)
 
-        existing_keys.add(u_key)
-
-        stage = item.get("stage") or (
-            "Tiền dự án (Thẩm định giá)" if "thẩm định giá" in str(item.get("matched_kw", "")).lower()
-            else ("Mời báo giá (YCCG)" if source_type == "YCCG" else source_type)
-        )
-        bu_group = item.get("bu_group") or "Chưa phân nhóm BU"
-        province = item.get("province", "")
-        investor = item.get("investor", "")
+        stage = item.get("stage", "Mời báo giá (YCBG)")
+        bu_group = item.get("bu_group", "Đa chuyên khoa / TBYT tổng hợp")
         title = item.get("title", "")
+        investor = item.get("investor", "")
+        province = item.get("province", "")
+        bid_close_date = item.get("bid_close_date", "")
         matched_kw = item.get("matched_kw", "")
-        location = item.get("location", "")
         reason = item.get("reason", "")
-        link_cell = format_hyperlink(item.get("detail_url", ""))
+        auto_note = item.get("auto_note", "")
+        full_note = f"{reason} | Note: {auto_note}" if (auto_note and auto_note not in reason) else (reason or auto_note)
+        detail_url = item.get("detail_url", "")
 
-        if source_type == "YCCG":
-            row = [
-                u_key,
-                stage,
-                SYNC_TIME_STR,
-                province,
-                investor,
-                title,
-                item.get("bid_close_date", "Chưa xác định"),
-                matched_kw,
-                location,
-                bu_group,
-                reason,
-                link_cell
-            ] + empty_sales_cols
-
-        elif source_type == "KHLCNT":
-            row = [
-                u_key,
-                f"'{item.get('decision_no', '')}" if item.get("decision_no") else "",
-                stage,
-                item.get("public_date") or SYNC_TIME_STR,
-                province,
-                investor,
-                title,
-                item.get("invest_total", "Chưa cập nhật"),
-                item.get("expected_time", "Xem chi tiết"),
-                matched_kw,
-                location,
-                bu_group,
-                reason,
-                link_cell
-            ] + empty_sales_cols
-
-        else:  # TBMT
-            ver_str = str(item.get("notify_ver") or "00").strip()
-            row = [
-                u_key,
-                f"'{ver_str}",
-                stage,
-                SYNC_TIME_STR,
-                province,
-                investor,
-                title,
-                item.get("amount", "0.00"),
-                matched_kw,
-                location,
-                bu_group,
-                reason,
-                link_cell
-            ] + empty_sales_cols
-
-        new_rows.append(row)
+        new_rows.append([
+            SYNC_TIME_STR,
+            code,
+            stage,
+            bu_group,
+            title,
+            investor,
+            province,
+            bid_close_date,
+            matched_kw,
+            full_note,
+            detail_url
+        ])
 
     if new_rows:
         ws.append_rows(new_rows, value_input_option="USER_ENTERED")
-        apply_sheet_layout_and_wrap(spreadsheet, ws, source_type)
-        print(f"[SUCCESS GSHEET] Đã ghi thêm {len(new_rows)} dòng MỚI và định dạng xuống dòng trên sheet '{source_type}'.")
+        print(f"[SUCCESS] Đã ghi thêm {len(new_rows)} gói YCBG mới vào Google Sheets.")
     else:
-        print(f"[INFO GSHEET] Toàn bộ {len(records)} bản ghi đã tồn tại trên sheet '{source_type}' (0 dòng trùng được ghi thêm).")
-
+        print("Tất cả gói YCBG quét được đều đã tồn tại trên Google Sheets (0 dòng trùng).")
 
 if __name__ == "__main__":
-    src = sys.argv[1].upper() if len(sys.argv) > 1 else "TBMT"
-    sync_data(src)
+    main()
