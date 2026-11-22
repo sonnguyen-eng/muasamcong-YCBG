@@ -146,9 +146,9 @@ if LAST_RUN_ENV:
         parsed_last_run = datetime.fromisoformat(LAST_RUN_ENV.replace("Z", "+00:00")).astimezone(TZ_VN)
         START_TIME = parsed_last_run - timedelta(minutes=15)
     except Exception:
-        START_TIME = NOW_VN - timedelta(hours=24)
+        START_TIME = NOW_VN - timedelta(hours=72)
 else:
-    START_TIME = NOW_VN - timedelta(hours=24)
+    START_TIME = NOW_VN - timedelta(hours=72)
 
 BASE_DOMAIN = "muasamcong.mof.gov.vn"
 PRIMARY_MODEL = "gemini-3.8-flash"
