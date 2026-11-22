@@ -28,24 +28,25 @@ RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL", "").strip() or SENDER_EMAIL
 LAST_RUN_ENV = os.environ.get("LAST_RUN_TIMESTAMP", "").strip()
 EVENT_NAME_ENV = os.environ.get("GITHUB_EVENT_NAME", "").strip()
 
-# Nhóm 1: Từ khóa thiết bị y tế & giải pháp PACS đặc thù (khớp trực tiếp)
+# Nhóm 1: Từ khóa thiết bị y tế & giải pháp PACS đặc thù (Đầy đủ toàn bộ BU)
 SPECIFIC_DEVICE_KEYWORDS = [
     # Nội soi - Phẫu thuật - Laser
-    "nội soi", "ống soi", "optic nội soi", "ercp", "robot phẫu thuật",
-    "tán sỏi laser", "máy tán sỏi",
+    "nội soi", "ống soi", "optic nội soi", "dụng cụ nội soi", "ercp",
+    "robot phẫu thuật", "tán sỏi laser", "máy tán sỏi",
     # Phòng mổ - Gây mê - Hồi sức - Giường
-    "bàn mổ", "đèn mổ", "máy gây mê", "monitor theo dõi bệnh nhân",
-    "máy theo dõi bệnh nhân", "bơm tiêm điện", "máy truyền dịch",
+    "bàn mổ", "đèn mổ", "thiết bị phòng mổ", "máy gây mê",
+    "monitor theo dõi bệnh nhân", "máy theo dõi bệnh nhân",
+    "bơm tiêm điện", "máy truyền dịch",
     "giường icu", "giường cấp cứu", "giường đa năng", "giường bệnh",
     "hồi sức cấp cứu", "hồi sức sơ sinh", "máy thở", "máy phá rung tim",
     # Khí y tế - Vận chuyển - Tiệt trùng
     "hệ thống khí y tế", "bồn oxy lỏng", "oxy trung tâm", "vận chuyển mẫu",
-    "máy hấp tiệt trùng", "nhiệt độ thấp", "máy hấp ướt",
-    # Sản khoa - Chẩn đoán hình ảnh - PACS - Chuyên khoa
+    "máy hấp tiệt trùng", "nhiệt độ thấp", "máy hấp ướt", "nồi hấp",
+    # Sản khoa - Chẩn đoán hình ảnh - PACS - Thận nhân tạo
     "bàn khám sản", "monitor sản khoa", "c-arm", "c arm", "x-quang",
-    "máy siêu âm", "siêu âm màu", "siêu âm chẩn đoán", "thận nhân tạo",
-    "máy chạy thận", "hdf online",
-    "pacs", "ris/pacs", "ris - pacs", "lưu trữ và truyền tải hình ảnh",
+    "máy siêu âm", "siêu âm màu", "siêu âm chẩn đoán",
+    "thận nhân tạo", "máy chạy thận", "hdf online",
+    "pacs", "ris/pacs", "ris - pacs", "lưu trữ và truyền tải hình ảnh", "Cộng hưởng từ", "MRI", "Cắt lớp vi tính", "CT Scanner"
     # Gói mua sắm / sửa chữa / chào giá thiết bị y tế tổng thể
     "thiết bị y tế chuyên môn", "thiết bị y tế chuyên dùng",
     "thiết bị y tế cấp thiết", "mua sắm thiết bị chuyên môn",
@@ -56,7 +57,7 @@ SPECIFIC_DEVICE_KEYWORDS = [
 
 # Nhóm 2: Từ khóa có điều kiện (CHỈ khớp khi đi kèm đơn vị/công trình ngành Y tế)
 CONDITIONAL_KEYWORDS = [
-    "thẩm định giá", "chẩn đoán hình ảnh"
+    "thẩm định giá", "chẩn đoán hình ảnh", "phục vụ chuyên môn"
 ]
 
 # Thực thể / Công trình thuộc ngành Y tế
@@ -146,9 +147,9 @@ if LAST_RUN_ENV:
         parsed_last_run = datetime.fromisoformat(LAST_RUN_ENV.replace("Z", "+00:00")).astimezone(TZ_VN)
         START_TIME = parsed_last_run - timedelta(minutes=15)
     except Exception:
-        START_TIME = NOW_VN - timedelta(hours=72)
+        START_TIME = NOW_VN - timedelta(hours=48)
 else:
-    START_TIME = NOW_VN - timedelta(hours=72)
+    START_TIME = NOW_VN - timedelta(hours=48)
 
 BASE_DOMAIN = "muasamcong.mof.gov.vn"
 PRIMARY_MODEL = "gemini-3.8-flash"
@@ -267,11 +268,10 @@ def get_yccg_detail_values(driver, req_id, req_type, token_val):
     var reqId = arguments[0];
     var reqType = arguments[1];
     var token = arguments[2];
-
+    
     let endpoint = (reqType === 'es-price-req')
         ? '/o/egp-portal-contractor-selection-v2/services/expose/lcnt/bid-po-bidp-price-req-view/view-price-req'
         : '/o/egp-portal-contractor-selection-v2/services/get-request-quote';
-
     if (token) {
         endpoint += '?token=' + token;
     }
@@ -291,18 +291,22 @@ def get_yccg_detail_values(driver, req_id, req_type, token_val):
     extracted_items = []
     attached_files = []
     detail_raw_lower = ""
-
     try:
         res = driver.execute_async_script(js_get_detail, req_id, req_type, token_val)
         if isinstance(res, dict) and not res.get("error"):
             detail_raw_lower = json.dumps(res, ensure_ascii=False).lower()
             rq_obj = res.get("bidoRequestQuote") or res.get("bidPoBidpPriceReqView") or res
-
             if isinstance(rq_obj, dict):
                 for f_key in ["otherFileName", "briefFileName", "decisionFileName"]:
                     f_val = rq_obj.get(f_key)
                     if f_val:
                         attached_files.append(str(f_val))
+                rq_file_obj = rq_obj.get("requestQuoteFile")
+                if isinstance(rq_file_obj, dict):
+                    for f_key in ["otherFileName", "briefFileName", "decisionFileName", "fileName"]:
+                        f_val = rq_file_obj.get(f_key)
+                        if f_val and str(f_val) not in attached_files:
+                            attached_files.append(str(f_val))
 
                 form_val_raw = rq_obj.get("formValue")
                 if isinstance(form_val_raw, str) and form_val_raw.strip():
@@ -329,7 +333,6 @@ def get_yccg_detail_values(driver, req_id, req_type, token_val):
                         pass
     except Exception:
         pass
-
     return extracted_items, attached_files, detail_raw_lower
 
 # ==============================================================================
@@ -395,12 +398,13 @@ def is_equipment_item(text_lower):
     if any(excl in text_lower for excl in EXCLUDE_NON_MEDICAL_PATTERNS):
         return False
     equipment_terms = [
-        "thiết bị y tế", "trang thiết bị y tế", "nội soi", "ống soi", "bàn mổ", "đèn mổ",
-        "gây mê", "hồi sức", "giường icu", "giường cấp cứu", "giường đa năng",
-        "giường bệnh", "máy x-quang", "hệ thống x-quang", "c-arm", "c arm",
-        "máy siêu âm", "máy thở", "tán sỏi", "khí y tế", "oxy lỏng", "oxy trung tâm",
-        "tiệt trùng", "monitor", "sơ sinh", "thận nhân tạo", "máy chạy thận",
-        "robot phẫu thuật", "pacs", "ris/pacs", "lưu trữ và truyền tải hình ảnh",
+        "thiết bị y tế", "trang thiết bị y tế", "nội soi", "ống soi", "dụng cụ nội soi",
+        "bàn mổ", "đèn mổ", "gây mê", "hồi sức", "giường icu", "giường cấp cứu",
+        "giường đa năng", "giường bệnh", "máy x-quang", "hệ thống x-quang",
+        "c-arm", "c arm", "máy siêu âm", "máy thở", "tán sỏi", "khí y tế",
+        "oxy lỏng", "oxy trung tâm", "tiệt trùng", "nồi hấp", "monitor",
+        "sơ sinh", "thận nhân tạo", "máy chạy thận", "robot phẫu thuật",
+        "pacs", "ris/pacs", "lưu trữ và truyền tải hình ảnh",
         "sửa chữa thiết bị y tế", "sửa chữa máy"
     ]
     return any(t in text_lower for t in equipment_terms)
@@ -411,7 +415,7 @@ def evaluate_ycbg_medical_relevance(title, investor, extracted_items, equipment_
     items_lower = " ".join(extracted_items).lower()
     files_lower = " ".join(attached_files).lower()
     core_text = f"{title_lower} {investor_lower} {items_lower} {files_lower}"
-    content_text = f"{title_lower} {items_lower}"
+    content_text = f"{title_lower} {items_lower} {files_lower}"
 
     # 1. Chốt chặn loại trừ các dự án ngoài ngành y tế, khám sức khỏe, duy tu/ốp gạch/sơn sửa nhỏ
     if any(excl in core_text for excl in EXCLUDE_NON_MEDICAL_PATTERNS):
@@ -424,14 +428,14 @@ def evaluate_ycbg_medical_relevance(title, investor, extracted_items, equipment_
     if is_rental_item(content_text):
         return False, False, []
 
-    # 3. Nếu đã bóc tách được danh mục hàng hóa chi tiết mà KHÔNG có thiết bị nào (chỉ toàn vật tư tiêu hao như bông băng, bơm kim tiêm, phim X-quang)
+    # 3. Nếu đã bóc tách được danh mục hàng hóa chi tiết mà KHÔNG có thiết bị nào (chỉ toàn vật tư tiêu hao)
     if extracted_items and not equipment_items:
         has_medical_entity = any(ent in f"{title_lower} {investor_lower}" for ent in MEDICAL_ENTITY_TERMS)
         is_major_hospital_proj = has_medical_entity and any(act in title_lower for act in HOSPITAL_PROJECT_ACTIONS)
         if not is_major_hospital_proj:
             return False, False, []
 
-    # Nếu không có danh mục con (chỉ có tiêu đề + file đính kèm) nhưng tiêu đề rõ ràng là vật tư tiêu hao / phim X-quang -> loại
+    # Nếu không có danh mục con nhưng tiêu đề rõ ràng là vật tư tiêu hao / phim X-quang -> loại
     if not equipment_items and is_consumable_item(title_lower):
         return False, False, []
 
@@ -444,8 +448,8 @@ def evaluate_ycbg_medical_relevance(title, investor, extracted_items, equipment_
     # 4. Kiểm tra thực thể y tế
     has_medical_entity = any(ent in f"{title_lower} {investor_lower}" for ent in MEDICAL_ENTITY_TERMS)
 
-    # 5. Kiểm tra từ khóa thiết bị y tế & mua đứt PACS đặc thù
-    clean_scope = " ".join(equipment_items).lower() if equipment_items else (content_text if items_lower.strip() else raw_str)
+    # 5. Kiểm tra từ khóa thiết bị y tế & mua đứt PACS đặc thù (bao gồm cả tên file đính kèm)
+    clean_scope = " ".join(equipment_items).lower() if equipment_items else (content_text if (items_lower.strip() or files_lower.strip()) else raw_str)
     matched_specific = [k for k in SPECIFIC_DEVICE_KEYWORDS if k in clean_scope]
 
     # Loại bỏ khớp nhầm "x-quang" nếu chỉ là "phim x-quang"
@@ -454,11 +458,11 @@ def evaluate_ycbg_medical_relevance(title, investor, extracted_items, equipment_
     ):
         matched_specific = [k for k in matched_specific if k != "x-quang"]
 
-    # 6. Kiểm tra từ khóa có điều kiện (CHỈ tính khi thuộc thực thể y tế và xuất hiện trong tiêu đề/danh mục)
+    # 6. Kiểm tra từ khóa có điều kiện (CHỈ tính khi thuộc thực thể y tế và xuất hiện trong tiêu đề/danh mục/file)
     matched_cond = []
     if has_medical_entity:
         for ck in CONDITIONAL_KEYWORDS:
-            if ck in title_lower or ck in items_lower:
+            if ck in title_lower or ck in items_lower or ck in files_lower:
                 matched_cond.append(ck)
 
     # 7. Nhận diện YCBG Tổng thuộc Dự án Xây mới / Nâng cấp Công trình Bệnh viện
@@ -481,7 +485,7 @@ def evaluate_ycbg_medical_relevance(title, investor, extracted_items, equipment_
 # 9. TRÍCH XUẤT THÔNG TIN YCBG THEO KHUNG THỜI GIAN PHÂN TẦNG (150 - 500)
 # ==============================================================================
 def fetch_yccg_today(driver):
-    print(f"-> Chế độ chạy: {EVENT_NAME_ENV or 'local'} | Mốc lịch sử gốc: {LAST_RUN_ENV or 'Mặc định 24h'}")
+    print(f"-> Chế độ chạy: {EVENT_NAME_ENV or 'local'} | Mốc lịch sử gốc: {LAST_RUN_ENV or 'Mặc định 48h'}")
     print(f"-> Mở Session Mua Sắm Công YCBG (Khung quét có đệm: {START_TIME.strftime('%H:%M %d/%m/%Y')} -> {TODAY_STR})...")
     driver.get(f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index")
     time.sleep(9)
@@ -510,7 +514,7 @@ def fetch_yccg_today(driver):
     var token = arguments[3];
     var fromDate = arguments[4];
     var toDate = arguments[5];
-
+    
     let url = '/o/egp-portal-contractor-selection-v2/services/smart/search';
     if (token) {
         url += '?token=' + token;
@@ -523,14 +527,14 @@ def fetch_yccg_today(driver):
             index: "es-contractor-selection",
             keyWord: kw,
             matchType: "all-1",
-            matchFields: ["notifyNo", "bidName", "name"],
+            matchFields: ["notifyNo", "name"],
             filters: [
                 { fieldName: "type", searchType: "in", fieldValues: ["es-ycbg", "es-price-req"] },
                 { fieldName: "publicDate", searchType: "range", from: fromDate, to: toDate }
             ]
         }]
     }];
-
+    
     fetch(url, {
         method: 'POST',
         headers: {
@@ -593,7 +597,7 @@ def fetch_yccg_today(driver):
 
                 res = raw_res.get("body") if isinstance(raw_res, dict) else raw_res
                 data_list = []
-
+                
                 if isinstance(res, list) and len(res) > 0:
                     first_item = res[0]
                     if isinstance(first_item, dict):
@@ -635,6 +639,7 @@ def fetch_yccg_today(driver):
 
                     req_id = str(item.get("id") or "")
                     req_type = str(item.get("type") or "es-ycbg")
+
                     bid_name_raw = item.get("bidName")
                     if isinstance(bid_name_raw, list) and len(bid_name_raw) > 0:
                         title = str(bid_name_raw[0]).replace("\n", " ").strip()
@@ -674,7 +679,6 @@ def fetch_yccg_today(driver):
                             raw_str += " " + detail_str
 
                     equipment_items = [it for it in extracted_items if is_equipment_item(it.lower())]
-
                     is_relevant, is_hospital_proj_ycbg, kw_tags = evaluate_ycbg_medical_relevance(
                         title, investor, extracted_items, equipment_items, attached_files, raw_str
                     )
@@ -708,7 +712,7 @@ def fetch_yccg_today(driver):
                         display_items = equipment_items if equipment_items else extracted_items
                         snippet_parts = []
                         if display_items:
-                            snippet_parts.append("Danh mục thiết bị: " + " ; ".join(display_items[:15]))
+                            snippet_parts.append("Danh mục thiết bị: " + "; ".join(display_items[:15]))
                         if attached_files:
                             snippet_parts.append("File đính kèm: " + ", ".join(attached_files))
                         snippet_text = " | ".join(snippet_parts) if snippet_parts else raw_str[:1200]
@@ -886,12 +890,12 @@ def send_email_report(matched_list):
             location = item.get("location", "Biểu mẫu Mời chào giá")
             auto_note = item.get("auto_note", "")
             quote_items = item.get("quote_items", [])
-            reason = item.get("reason") or (" ; ".join(quote_items[:5]) if quote_items else "Khớp tiêu chí theo dõi y tế")
+            reason = item.get("reason") or ("; ".join(quote_items[:5]) if quote_items else "Khớp tiêu chí theo dõi y tế")
             if auto_note and auto_note not in reason:
                 reason += f"<br><b style='color:#d9534f;'>Note: {auto_note}</b>"
             matched_kw = item.get("matched_kw", "")
             detail_url = item.get("detail_url") or f"https://{BASE_DOMAIN}/web/guest/contractor-selection?render=index"
-
+            
             code_block = f"<b>{code}</b><br><span style='font-size:11px; color:#2e7d32; font-weight:bold;'>[{stage}]</span>"
 
             rows += f"""
@@ -908,7 +912,7 @@ def send_email_report(matched_list):
                 <td align="center"><a href="{detail_url}" target="_blank" style="color: #0275d8; font-weight: bold;">Xem ngay</a></td>
             </tr>
             """
-
+            
         html_body = f"""
         <div style="font-family: Arial, sans-serif; padding: 20px;">
             <h2 style="color: #0275d8;">BÁO CÁO YÊU CẦU BÁO GIÁ (YCBG)</h2>
@@ -920,7 +924,7 @@ def send_email_report(matched_list):
                     <th>Mã YCBG / Giai Đoạn</th>
                     <th>Nội Dung Yêu Cầu</th>
                     <th>Đơn Vị Yêu Cầu</th>
-                    <th align="center">Tỉnh / TP</th>
+                    <th align="center">Tỉnh/TP</th>
                     <th align="center">Hạn Nộp Báo Giá</th>
                     <th align="center">Tiêu Chí Khớp</th>
                     <th align="center">Vị Trí Khớp</th>
